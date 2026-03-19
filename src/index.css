@@ -1,0 +1,56 @@
+:root {
+  --bg: #eef3f9;
+  --bg-ink: #082846;
+  --text: #13253a;
+  --text-soft: #294362;
+  --muted: #5c7290;
+  --line: #c7d5e6;
+  --line-strong: #99b2d0;
+  --panel-bg: rgba(255, 255, 255, 0.83);
+  --soft-shadow: 0 9px 28px rgba(8, 42, 77, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', sans-serif;
+  color: var(--text);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 10% 20%, rgba(251, 147, 59, 0.22), transparent 45%),
+    radial-gradient(circle at 90% 0%, rgba(39, 125, 255, 0.2), transparent 50%),
+    linear-gradient(180deg, #eef3f9, #e7f0fa);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: var(--bg-ink);
+}
+
+h1 {
+  margin-top: 0.25rem;
+  font-family: 'Sora', 'Space Grotesk', sans-serif;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-size: clamp(1.6rem, 2.6vw, 2.6rem);
+}
+
+h2 {
+  margin-bottom: 0.55rem;
+  font-size: 1.06rem;
+}
+
+h3 {
+  margin-top: 1rem;
+  font-size: 0.94rem;
+}
+
+p {
+  margin: 0;
+  line-height: 1.5;
+}

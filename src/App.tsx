@@ -1,0 +1,873 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  convertMidiToCloneHeroChart,
+  type ConvertOptions,
+  type ConversionResult,
+  type DrumDifficulty,
+} from './lib/midiToChart'
+import { convertGpToCloneHeroChart, inspectGpFile, type GpInspectionResult } from './lib/gpToChart'
+import './App.css'
+
+const ACCEPTED_MIDI_EXTENSIONS = ['.mid', '.midi']
+const ACCEPTED_GP_EXTENSIONS = ['.gp', '.gpif', '.gpx']
+
+type InputKind = 'midi' | 'gp' | 'unknown'
+
+function gpTrackOptionLabel(track: GpInspectionResult['tracks'][number]): string {
+  const filePart = track.fileTrackName || track.name || `Track ${track.id}`
+  const official = track.officialName || track.type || 'Unknown'
+  const base = `${filePart} | ${official}`
+  if (base.length <= 72) {
+    return base
+  }
+  return `${base.slice(0, 69)}...`
+}
+
+function App() {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isBusy, setIsBusy] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [result, setResult] = useState<ConversionResult | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [inputKind, setInputKind] = useState<InputKind>('unknown')
+  const [gpInfo, setGpInfo] = useState<GpInspectionResult | null>(null)
+  const [selectedGpTrackId, setSelectedGpTrackId] = useState<string>('')
+  const [options, setOptions] = useState<ConvertOptions>({
+    preferChannel10Only: true,
+    emitCymbalMarkers: true,
+    forceZeroLengthNotes: true,
+    preserveStackedHits: true,
+    difficulty: 'ExpertDrums',
+  })
+  const [isTimelinePlaying, setIsTimelinePlaying] = useState(false)
+  const [currentTick, setCurrentTick] = useState(0)
+  const [timelineZoom, setTimelineZoom] = useState(1.2)
+  const [playbackRate, setPlaybackRate] = useState(1)
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const noiseBufferRef = useRef<AudioBuffer | null>(null)
+  const playbackCursorRef = useRef(0)
+  const lastAudioTickRef = useRef(0)
+
+  const chartPreview = useMemo(() => {
+    if (!result) {
+      return ''
+    }
+
+    const lines = result.chartText.split('\n')
+    return lines.slice(0, 120).join('\n')
+  }, [result])
+
+  const firstMappedHits = useMemo(() => {
+    if (!result) {
+      return [] as string[]
+    }
+
+    const hits: string[] = []
+    const laneToName: Record<number, string> = {
+      0: 'Kick',
+      1: 'Snare',
+      2: 'Yellow',
+      3: 'Blue',
+      4: 'Green',
+    }
+
+    for (const line of result.chartText.split('\n')) {
+      const match = line.match(/=\s+N\s+(\d+)\s+/)
+      if (!match) {
+        continue
+      }
+      const lane = Number(match[1])
+      if (!Number.isFinite(lane) || lane < 0 || lane > 4) {
+        continue
+      }
+      hits.push(laneToName[lane] ?? `Lane ${lane}`)
+      if (hits.length >= 24) {
+        break
+      }
+    }
+
+    return hits
+  }, [result])
+
+  const timelineTempoBpm = useMemo(() => {
+    if (!result) {
+      return 120
+    }
+    const match = result.chartText.match(/\bB\s+(\d+)/)
+    if (!match) {
+      return 120
+    }
+    const raw = Number(match[1])
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return 120
+    }
+    return raw / 1000
+  }, [result])
+
+  const timelineMaxTick = useMemo(() => Math.max(1, result?.meta.maxTick ?? 1), [result])
+
+  const playbackNotes = useMemo(() => {
+    if (!result) {
+      return [] as ConversionResult['meta']['mappedPreviewNotes']
+    }
+    return [...result.meta.mappedPreviewNotes].sort((a, b) => a.tick - b.tick)
+  }, [result])
+
+  const miniTimeline = useMemo(() => {
+    if (!result) {
+      return {
+        width: 1200,
+        height: 150,
+        points: [] as Array<{
+          x: number
+          y: number
+          cymbal: boolean
+          lane: 0 | 1 | 2 | 3 | 4
+        }>,
+      }
+    }
+
+    const beatCount = timelineMaxTick / Math.max(1, result.meta.ppq)
+    const width = Math.max(1200, Math.round(beatCount * 24 * timelineZoom))
+    const height = 150
+    const laneY: Record<0 | 1 | 2 | 3 | 4, number> = {
+      0: 124,
+      1: 99,
+      2: 74,
+      3: 49,
+      4: 24,
+    }
+    const maxTick = timelineMaxTick
+
+    return {
+      width,
+      height,
+      points: result.meta.mappedPreviewNotes.map((note) => ({
+        x: 14 + Math.round((note.tick / maxTick) * (width - 28)),
+        y: laneY[note.lane],
+        cymbal: note.cymbal,
+        lane: note.lane,
+      })),
+    }
+  }, [result, timelineZoom, timelineMaxTick])
+
+  const currentTickX = useMemo(
+    () => 14 + Math.round((currentTick / timelineMaxTick) * (miniTimeline.width - 28)),
+    [currentTick, timelineMaxTick, miniTimeline.width],
+  )
+
+  const timelineDurationSeconds = useMemo(() => {
+    if (!result) {
+      return 0
+    }
+    const ticksPerSecond = (result.meta.ppq * timelineTempoBpm) / 60
+    if (!Number.isFinite(ticksPerSecond) || ticksPerSecond <= 0) {
+      return 0
+    }
+    return timelineMaxTick / ticksPerSecond
+  }, [result, timelineTempoBpm, timelineMaxTick])
+
+  function setCurrentTickClamped(value: number): void {
+    setCurrentTick(Math.min(timelineMaxTick, Math.max(0, value)))
+  }
+
+  function ensureAudioContext(): AudioContext | null {
+    const BrowserAudioContext = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!BrowserAudioContext) {
+      return null
+    }
+
+    if (!audioContextRef.current) {
+      audioContextRef.current = new BrowserAudioContext()
+    }
+
+    return audioContextRef.current
+  }
+
+  function ensureNoiseBuffer(context: AudioContext): AudioBuffer {
+    if (noiseBufferRef.current) {
+      return noiseBufferRef.current
+    }
+
+    const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate)
+    const channel = buffer.getChannelData(0)
+    for (let index = 0; index < channel.length; index += 1) {
+      channel[index] = Math.random() * 2 - 1
+    }
+
+    noiseBufferRef.current = buffer
+    return buffer
+  }
+
+  function triggerDrumSound(note: { lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean }): void {
+    const context = ensureAudioContext()
+    if (!context || context.state !== 'running') {
+      return
+    }
+
+    const now = context.currentTime
+    const out = context.createGain()
+    out.gain.setValueAtTime(0.0001, now)
+    out.connect(context.destination)
+
+    if (note.lane === 0) {
+      const osc = context.createOscillator()
+      const gain = context.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(160, now)
+      osc.frequency.exponentialRampToValueAtTime(48, now + 0.09)
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.9, now + 0.005)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13)
+      osc.connect(gain)
+      gain.connect(out)
+      osc.start(now)
+      osc.stop(now + 0.14)
+    } else if (note.lane === 1) {
+      const noise = context.createBufferSource()
+      noise.buffer = ensureNoiseBuffer(context)
+      const highpass = context.createBiquadFilter()
+      highpass.type = 'highpass'
+      highpass.frequency.setValueAtTime(1200, now)
+      const noiseGain = context.createGain()
+      noiseGain.gain.setValueAtTime(0.0001, now)
+      noiseGain.gain.exponentialRampToValueAtTime(0.5, now + 0.003)
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11)
+      noise.connect(highpass)
+      highpass.connect(noiseGain)
+      noiseGain.connect(out)
+      noise.start(now)
+      noise.stop(now + 0.12)
+
+      const body = context.createOscillator()
+      const bodyGain = context.createGain()
+      body.type = 'triangle'
+      body.frequency.setValueAtTime(210, now)
+      body.frequency.exponentialRampToValueAtTime(140, now + 0.08)
+      bodyGain.gain.setValueAtTime(0.0001, now)
+      bodyGain.gain.exponentialRampToValueAtTime(0.28, now + 0.004)
+      bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09)
+      body.connect(bodyGain)
+      bodyGain.connect(out)
+      body.start(now)
+      body.stop(now + 0.1)
+    } else if (note.cymbal) {
+      const noise = context.createBufferSource()
+      noise.buffer = ensureNoiseBuffer(context)
+      const bandpass = context.createBiquadFilter()
+      bandpass.type = 'bandpass'
+      bandpass.frequency.setValueAtTime(note.lane === 2 ? 6000 : note.lane === 3 ? 5000 : 4500, now)
+      bandpass.Q.setValueAtTime(1.2, now)
+      const gain = context.createGain()
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.45, now + 0.002)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24)
+      noise.connect(bandpass)
+      bandpass.connect(gain)
+      gain.connect(out)
+      noise.start(now)
+      noise.stop(now + 0.25)
+    } else {
+      const osc = context.createOscillator()
+      const gain = context.createGain()
+      osc.type = 'triangle'
+      const startHz = note.lane === 2 ? 280 : note.lane === 3 ? 210 : 160
+      const endHz = note.lane === 2 ? 220 : note.lane === 3 ? 160 : 120
+      osc.frequency.setValueAtTime(startHz, now)
+      osc.frequency.exponentialRampToValueAtTime(endHz, now + 0.13)
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.6, now + 0.004)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16)
+      osc.connect(gain)
+      gain.connect(out)
+      osc.start(now)
+      osc.stop(now + 0.17)
+    }
+
+    out.gain.exponentialRampToValueAtTime(0.0001, now + 0.28)
+  }
+
+  useEffect(() => {
+    setIsTimelinePlaying(false)
+    setCurrentTick(0)
+    playbackCursorRef.current = 0
+    lastAudioTickRef.current = 0
+  }, [result])
+
+  useEffect(() => {
+    if (!isTimelinePlaying || !result) {
+      return
+    }
+
+    const ticksPerSecond = (result.meta.ppq * timelineTempoBpm) / 60
+    let raf = 0
+    let last = performance.now()
+    const startIndex = playbackNotes.findIndex((note) => note.tick >= currentTick)
+    playbackCursorRef.current = startIndex >= 0 ? startIndex : playbackNotes.length
+    lastAudioTickRef.current = currentTick
+
+    const frame = (now: number) => {
+      const deltaSeconds = (now - last) / 1000
+      last = now
+
+      setCurrentTick((prev) => {
+        const next = prev + deltaSeconds * ticksPerSecond * playbackRate
+
+        let cursor = playbackCursorRef.current
+        while (cursor < playbackNotes.length && playbackNotes[cursor].tick <= next) {
+          const note = playbackNotes[cursor]
+          if (note.tick >= lastAudioTickRef.current) {
+            triggerDrumSound(note)
+          }
+          cursor += 1
+        }
+        playbackCursorRef.current = cursor
+        lastAudioTickRef.current = next
+
+        if (next >= timelineMaxTick) {
+          setIsTimelinePlaying(false)
+          return timelineMaxTick
+        }
+        return next
+      })
+
+      raf = window.requestAnimationFrame(frame)
+    }
+
+    raf = window.requestAnimationFrame(frame)
+    return () => window.cancelAnimationFrame(raf)
+  }, [isTimelinePlaying, result, timelineTempoBpm, timelineMaxTick, playbackRate, currentTick, playbackNotes])
+
+  useEffect(() => {
+    const container = timelineScrollRef.current
+    if (!container) {
+      return
+    }
+
+    if (container.scrollWidth <= container.clientWidth) {
+      return
+    }
+
+    const desired = currentTickX - container.clientWidth * 0.5
+    const clamped = Math.max(0, Math.min(desired, container.scrollWidth - container.clientWidth))
+    container.scrollLeft = clamped
+  }, [timelineZoom, currentTickX])
+
+  useEffect(() => {
+    if (!isTimelinePlaying) {
+      return
+    }
+    const container = timelineScrollRef.current
+    if (!container) {
+      return
+    }
+
+    const desired = currentTickX - container.clientWidth * 0.45
+    const clamped = Math.max(0, Math.min(desired, container.scrollWidth - container.clientWidth))
+    container.scrollLeft = clamped
+  }, [currentTickX, isTimelinePlaying])
+
+  function isMidiFile(file: File): boolean {
+    const lower = file.name.toLowerCase()
+    return ACCEPTED_MIDI_EXTENSIONS.some((ext) => lower.endsWith(ext))
+  }
+
+  function isGpFile(file: File): boolean {
+    const lower = file.name.toLowerCase()
+    return ACCEPTED_GP_EXTENSIONS.some((ext) => lower.endsWith(ext))
+  }
+
+  async function onFilePicked(file: File | null): Promise<void> {
+    if (!file) {
+      return
+    }
+
+    const midi = isMidiFile(file)
+    const gp = isGpFile(file)
+
+    if (!midi && !gp) {
+      setErrorMessage('Please select a valid file: .mid/.midi or .gp/.gpif/.gpx')
+      return
+    }
+
+    setInputKind(midi ? 'midi' : 'gp')
+    setSelectedFile(file)
+    setResult(null)
+    setErrorMessage(null)
+    setGpInfo(null)
+    setSelectedGpTrackId('')
+
+    if (gp) {
+      try {
+        const parsed = await inspectGpFile(file)
+        setGpInfo(parsed)
+        const defaultTrack = parsed.tracks.find((track) => track.isDrums) ?? parsed.tracks[0]
+        setSelectedGpTrackId(defaultTrack?.id ?? '')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not parse GP file.'
+        setErrorMessage(message)
+      }
+    }
+  }
+
+  async function runConversion(): Promise<void> {
+    if (!selectedFile) {
+      setErrorMessage('Choose a MIDI file first.')
+      return
+    }
+
+    setIsBusy(true)
+    setErrorMessage(null)
+
+    try {
+      let converted: ConversionResult
+      if (inputKind === 'gp') {
+        if (!selectedGpTrackId) {
+          throw new Error('Choose a GP track before converting.')
+        }
+        converted = await convertGpToCloneHeroChart(selectedFile, selectedGpTrackId, options)
+      } else {
+        converted = await convertMidiToCloneHeroChart(selectedFile, options)
+      }
+
+      setResult(converted)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Conversion failed.'
+      setErrorMessage(message)
+      setResult(null)
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  function downloadChart(): void {
+    if (!result) {
+      return
+    }
+
+    const blob = new Blob([result.chartText], { type: 'text/plain;charset=utf-8' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = result.outputFileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(link.href)
+  }
+
+  function setDifficulty(value: DrumDifficulty): void {
+    setOptions((prev) => ({ ...prev, difficulty: value }))
+  }
+
+  return (
+    <main className="page-shell">
+      <section className="hero-card">
+        <div>
+          <p className="kicker">MIDI to Clone Hero Converter</p>
+          <h1>Drum-first chart conversion for Clone Hero and Moonscraper</h1>
+          <p className="lead">
+            Upload a drum MIDI and export a pro-drums ready <strong>.chart</strong>{' '}
+            using 4 lanes plus cymbal flags.
+          </p>
+        </div>
+        <div className="pill-row">
+          <span className="pill">4-lane pro drums</span>
+          <span className="pill">Cymbal markers</span>
+          <span className="pill">Tempo + time signature sync</span>
+        </div>
+      </section>
+
+      <section className="grid-layout">
+        <article className="panel uploader">
+          <h2>1. Pick Source File</h2>
+          <label
+            className={`dropzone ${isDragging ? 'dragging' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setIsDragging(true)
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault()
+              setIsDragging(false)
+              void onFilePicked(event.dataTransfer.files?.[0] ?? null)
+            }}
+          >
+            <input
+              type="file"
+              accept=".mid,.midi,.gp,.gpif,.gpx,audio/midi,audio/x-midi"
+              onChange={(event) => {
+                void onFilePicked(event.target.files?.[0] ?? null)
+              }}
+            />
+            <span className="dropzone-title">Drop MIDI or GP file here</span>
+            <span className="dropzone-subtitle">Supports .mid/.midi and .gp/.gpif/.gpx</span>
+          </label>
+
+          <p className="meta-row">
+            Selected:{' '}
+            <strong>{selectedFile ? selectedFile.name : 'No file selected'}</strong>
+          </p>
+
+          {inputKind === 'gp' && gpInfo ? (
+            <div className="gp-track-box">
+              <p className="meta-row">
+                GP Song: <strong>{gpInfo.title}</strong> by <strong>{gpInfo.artist}</strong>
+              </p>
+              <label className="select-row">
+                Isolate Track / Part
+                <select
+                  value={selectedGpTrackId}
+                  onChange={(event) => setSelectedGpTrackId(event.target.value)}
+                >
+                  {gpInfo.tracks.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {gpTrackOptionLabel(track)} {track.isDrums ? '(drums)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="track-details-list">
+                {gpInfo.tracks.map((track) => (
+                  <p key={`track-meta-${track.id}`}>
+                    <strong>{track.fileTrackName || track.name || `Track ${track.id}`}</strong> | official:{' '}
+                    {track.officialName || 'Unknown'} | short: {track.shortName || '-'} | type:{' '}
+                    {track.type || '-'} {track.isDrums ? '| drums-like' : ''}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <h2>2. Conversion Settings</h2>
+          <div className="control-stack">
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.preferChannel10Only}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    preferChannel10Only: event.target.checked,
+                  }))
+                }
+              />
+              Prefer channel 10 tracks only
+            </label>
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.emitCymbalMarkers}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    emitCymbalMarkers: event.target.checked,
+                  }))
+                }
+              />
+              Emit pro-drums cymbal marker notes
+            </label>
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.forceZeroLengthNotes}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    forceZeroLengthNotes: event.target.checked,
+                  }))
+                }
+              />
+              Force zero-length drum gems
+            </label>
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.preserveStackedHits}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    preserveStackedHits: event.target.checked,
+                  }))
+                }
+              />
+              Preserve stacked hits (nudge same-tick collisions)
+            </label>
+
+            <label className="select-row">
+              Difficulty section
+              <select
+                value={options.difficulty}
+                onChange={(event) => setDifficulty(event.target.value as DrumDifficulty)}
+              >
+                <option value="EasyDrums">EasyDrums</option>
+                <option value="MediumDrums">MediumDrums</option>
+                <option value="HardDrums">HardDrums</option>
+                <option value="ExpertDrums">ExpertDrums</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="action-row">
+            <button
+              className="primary-btn"
+              onClick={() => void runConversion()}
+              disabled={!selectedFile || isBusy}
+            >
+              {isBusy ? 'Converting...' : 'Convert to .chart'}
+            </button>
+            <button
+              className="secondary-btn"
+              onClick={downloadChart}
+              disabled={!result || isBusy}
+            >
+              Download chart
+            </button>
+          </div>
+
+          {errorMessage ? <p className="error-row">{errorMessage}</p> : null}
+        </article>
+
+        <article className="panel results">
+          <h2>3. Results</h2>
+
+          {result ? (
+            <>
+              <div className="stat-grid">
+                <div className="stat-card">
+                  <span className="stat-label">Mapped Notes</span>
+                  <strong>{result.meta.totalMappedNotes}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">PPQ / Resolution</span>
+                  <strong>{result.meta.ppq}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">Cymbal Flags</span>
+                  <strong>{result.meta.stats.cymbalFlags}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">Unmapped Notes</span>
+                  <strong>{result.meta.stats.unmapped}</strong>
+                </div>
+              </div>
+
+              <div className="lane-breakdown">
+                <p>
+                  Lanes: Kick {result.meta.stats.kick} | Red {result.meta.stats.red}{' '}
+                  | Yellow {result.meta.stats.yellow} | Blue {result.meta.stats.blue} |
+                  Green {result.meta.stats.green}
+                </p>
+                <p>Source tracks: {result.meta.usedTrackNames.join(', ')}</p>
+              </div>
+
+              <h3>Source MIDI Note Histogram</h3>
+              <div className="histogram-grid">
+                {result.meta.sourceNoteHistogram.slice(0, 16).map((entry) => (
+                  <div key={`src-${entry.midi}`} className="histogram-item">
+                    <span>MIDI {entry.midi}</span>
+                    <strong>{entry.count}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {result.meta.unmappedHistogram.length > 0 ? (
+                <>
+                  <h3>Unmapped MIDI Notes</h3>
+                  <div className="histogram-grid">
+                    {result.meta.unmappedHistogram.slice(0, 16).map((entry) => (
+                      <div key={`unmapped-${entry.midi}`} className="histogram-item unmapped">
+                        <span>MIDI {entry.midi}</span>
+                        <strong>{entry.count}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {result.meta.kickSourceHistogram.length > 0 ? (
+                <>
+                  <h3>Kick Source MIDI Notes</h3>
+                  <div className="histogram-grid">
+                    {result.meta.kickSourceHistogram.slice(0, 12).map((entry) => (
+                      <div key={`kick-src-${entry.midi}`} className="histogram-item">
+                        <span>MIDI {entry.midi}</span>
+                        <strong>{entry.count}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              <h3>Chart Preview</h3>
+              <p className="sequence-row">
+                First mapped hits:{' '}
+                <strong>{firstMappedHits.slice(0, 12).join(' -> ') || 'n/a'}</strong>
+              </p>
+              <textarea readOnly value={chartPreview} rows={18} />
+            </>
+          ) : (
+            <p className="empty-state">
+              Convert a MIDI or GP part to preview the generated chart contents.
+            </p>
+          )}
+        </article>
+      </section>
+
+      {result ? (
+        <section className="timeline-panel">
+          <h2>Selected Track Timeline</h2>
+          <p className="timeline-caption">
+            Interactive mini chart. Play, rewind, scrub, zoom, and horizontally scroll through the full selected track.
+          </p>
+          <div className="timeline-controls">
+            <button
+              className="secondary-btn"
+              onClick={() => {
+                setIsTimelinePlaying(false)
+                setCurrentTickClamped(0)
+              }}
+            >
+              Rewind
+            </button>
+            <button
+              className="primary-btn"
+              onClick={() => {
+                const context = ensureAudioContext()
+                if (context && context.state === 'suspended') {
+                  void context.resume()
+                }
+                if (currentTick >= timelineMaxTick) {
+                  setCurrentTickClamped(0)
+                }
+                setIsTimelinePlaying((prev) => !prev)
+              }}
+            >
+              {isTimelinePlaying ? 'Pause' : 'Play'}
+            </button>
+            <label className="timeline-input">
+              Speed
+              <select
+                value={playbackRate}
+                onChange={(event) => setPlaybackRate(Number(event.target.value))}
+              >
+                <option value={0.5}>0.5x</option>
+                <option value={0.75}>0.75x</option>
+                <option value={1}>1x</option>
+                <option value={1.25}>1.25x</option>
+                <option value={1.5}>1.5x</option>
+                <option value={2}>2x</option>
+              </select>
+            </label>
+            <label className="timeline-input">
+              Zoom
+              <input
+                type="range"
+                min={0.8}
+                max={5}
+                step={0.1}
+                value={timelineZoom}
+                onChange={(event) => setTimelineZoom(Number(event.target.value))}
+              />
+            </label>
+            <label className="timeline-input stretch">
+              Position
+              <input
+                type="range"
+                min={0}
+                max={timelineMaxTick}
+                step={1}
+                value={Math.round(currentTick)}
+                onChange={(event) => {
+                  setIsTimelinePlaying(false)
+                  setCurrentTickClamped(Number(event.target.value))
+                }}
+              />
+            </label>
+            <p className="timeline-time">
+              {timelineDurationSeconds > 0
+                ? `${(timelineDurationSeconds * (currentTick / timelineMaxTick)).toFixed(2)}s / ${timelineDurationSeconds.toFixed(2)}s`
+                : '0.00s / 0.00s'}
+            </p>
+          </div>
+          <div className="timeline-wrap" ref={timelineScrollRef}>
+            <svg
+              viewBox={`0 0 ${miniTimeline.width} ${miniTimeline.height}`}
+              width={miniTimeline.width}
+              height={miniTimeline.height}
+              style={{ width: `${miniTimeline.width}px`, height: `${miniTimeline.height}px` }}
+              role="img"
+              aria-label="Mapped drum timeline"
+              onClick={(event) => {
+                const container = timelineScrollRef.current
+                if (!container) {
+                  return
+                }
+                const rect = container.getBoundingClientRect()
+                const x = event.clientX - rect.left + container.scrollLeft
+                const ratio = Math.min(1, Math.max(0, x / miniTimeline.width))
+                setIsTimelinePlaying(false)
+                setCurrentTickClamped(ratio * timelineMaxTick)
+              }}
+            >
+              {[24, 49, 74, 99, 124].map((y) => (
+                <line key={`lane-${y}`} x1="10" y1={y} x2={miniTimeline.width - 10} y2={y} className="timeline-lane" />
+              ))}
+              {miniTimeline.points
+                .filter((point) => point.lane === 0)
+                .map((point, index) => (
+                  <line
+                    key={`kick-bar-${index}`}
+                    x1={point.x}
+                    y1="10"
+                    x2={point.x}
+                    y2="138"
+                    className="timeline-kick-bar"
+                  />
+                ))}
+              <line x1={currentTickX} y1="10" x2={currentTickX} y2="138" className="timeline-playhead" />
+              {miniTimeline.points.map((point, index) =>
+                point.lane === 0 ? null : (
+                  <rect
+                    key={`point-${index}`}
+                    x={point.x - 4}
+                    y={point.y - 4}
+                    width="8"
+                    height="8"
+                    rx="2"
+                    className={
+                      point.lane === 1
+                        ? 'timeline-note lane-red'
+                        : point.lane === 2
+                          ? 'timeline-note lane-yellow'
+                          : point.lane === 3
+                            ? 'timeline-note lane-blue'
+                            : 'timeline-note lane-green'
+                    }
+                  />
+                ),
+              )}
+            </svg>
+          </div>
+          <p className="timeline-legend">
+            Top to bottom lanes: Green, Blue, Yellow, Red, Kick. Click anywhere in the mini chart to jump position.
+          </p>
+        </section>
+      ) : null}
+
+      <section className="legend">
+        <h2>Default Drum Mapping</h2>
+        <p>
+          Kick: 35/36 | Red: snare notes | Yellow: hi-hat + high tom | Blue:
+          ride/mid tom | Green: crash/floor tom. Cymbals emit note flags 66/67/68.
+        </p>
+      </section>
+    </main>
+  )
+}
+
+export default App
