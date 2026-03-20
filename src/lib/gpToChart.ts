@@ -80,6 +80,7 @@ interface GpMappedNote {
   lane: 0 | 1 | 2 | 3 | 4
   length: number
   cymbal: boolean
+  openHiHat: boolean
 }
 
 const KICK = new Set([35, 36])
@@ -90,6 +91,7 @@ const BLUE_CYMBAL = new Set([51, 53, 59])
 const BLUE_TOM = new Set([45, 47])
 const GREEN_CYMBAL = new Set([49, 52, 55, 57])
 const GREEN_TOM = new Set([41, 43])
+const OPEN_HIHAT = new Set([26, 46])
 
 const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   {
@@ -316,15 +318,15 @@ function rhythmDurationTicks(rhythm: GpRhythm, ppq: number): number {
   return ticks
 }
 
-function mapMidiNoteToLane(midi: number): Pick<GpMappedNote, 'lane' | 'cymbal'> | null {
-  if (KICK.has(midi)) return { lane: 0, cymbal: false }
-  if (RED.has(midi) || midi === 91) return { lane: 1, cymbal: false }
-  if (YELLOW_CYMBAL.has(midi)) return { lane: 2, cymbal: true }
-  if (YELLOW_TOM.has(midi)) return { lane: 2, cymbal: false }
-  if (BLUE_CYMBAL.has(midi)) return { lane: 3, cymbal: true }
-  if (BLUE_TOM.has(midi)) return { lane: 3, cymbal: false }
-  if (GREEN_CYMBAL.has(midi)) return { lane: 4, cymbal: true }
-  if (GREEN_TOM.has(midi)) return { lane: 4, cymbal: false }
+function mapMidiNoteToLane(midi: number): Pick<GpMappedNote, 'lane' | 'cymbal' | 'openHiHat'> | null {
+  if (KICK.has(midi)) return { lane: 0, cymbal: false, openHiHat: false }
+  if (RED.has(midi) || midi === 91) return { lane: 1, cymbal: false, openHiHat: false }
+  if (YELLOW_CYMBAL.has(midi)) return { lane: 2, cymbal: true, openHiHat: OPEN_HIHAT.has(midi) }
+  if (YELLOW_TOM.has(midi)) return { lane: 2, cymbal: false, openHiHat: false }
+  if (BLUE_CYMBAL.has(midi)) return { lane: 3, cymbal: true, openHiHat: false }
+  if (BLUE_TOM.has(midi)) return { lane: 3, cymbal: false, openHiHat: false }
+  if (GREEN_CYMBAL.has(midi)) return { lane: 4, cymbal: true, openHiHat: false }
+  if (GREEN_TOM.has(midi)) return { lane: 4, cymbal: false, openHiHat: false }
   return null
 }
 
@@ -700,6 +702,7 @@ function collectTrackMappedNotes(
             lane: mappedLane.lane,
             length: noteLength,
             cymbal: mappedLane.cymbal,
+            openHiHat: mappedLane.openHiHat,
           })
 
           if (mappedLane.lane === 0) stats.kick += 1
@@ -735,11 +738,12 @@ function collectTrackMappedNotes(
   }
 }
 
-function buildPreviewNotes(notes: GpMappedNote[]): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean }> {
+function buildPreviewNotes(notes: GpMappedNote[]): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }> {
   return notes.map((note) => ({
     tick: note.tick,
     lane: note.lane,
     cymbal: note.cymbal,
+    openHiHat: note.openHiHat,
   }))
 }
 

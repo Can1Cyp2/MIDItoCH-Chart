@@ -361,6 +361,13 @@ textarea {
   fill: #ecc94b;
 }
 
+.timeline-note.lane-yellow.open-hihat {
+  fill: #f6d95c;
+  stroke: #111827;
+  stroke-width: 1.1;
+  filter: drop-shadow(0 0 2px rgba(236, 201, 75, 0.65));
+}
+
 .timeline-note.lane-blue {
   fill: #3182ce;
 }

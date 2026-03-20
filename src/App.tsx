@@ -90,6 +90,13 @@ function App() {
     return hits
   }, [result])
 
+  const openHiHatCount = useMemo(() => {
+    if (!result) {
+      return 0
+    }
+    return result.meta.mappedPreviewNotes.filter((note) => note.openHiHat).length
+  }, [result])
+
   const timelineTempoBpm = useMemo(() => {
     if (!result) {
       return 120
@@ -123,6 +130,7 @@ function App() {
           x: number
           y: number
           cymbal: boolean
+            openHiHat: boolean
           lane: 0 | 1 | 2 | 3 | 4
         }>,
       }
@@ -147,6 +155,7 @@ function App() {
         x: 14 + Math.round((note.tick / maxTick) * (width - 28)),
         y: laneY[note.lane],
         cymbal: note.cymbal,
+        openHiHat: note.openHiHat,
         lane: note.lane,
       })),
     }
@@ -200,7 +209,7 @@ function App() {
     return buffer
   }
 
-  function triggerDrumSound(note: { lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean }): void {
+  function triggerDrumSound(note: { lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }): void {
     const context = ensureAudioContext()
     if (!context || context.state !== 'running') {
       return
@@ -257,17 +266,20 @@ function App() {
       noise.buffer = ensureNoiseBuffer(context)
       const bandpass = context.createBiquadFilter()
       bandpass.type = 'bandpass'
-      bandpass.frequency.setValueAtTime(note.lane === 2 ? 6000 : note.lane === 3 ? 5000 : 4500, now)
+      bandpass.frequency.setValueAtTime(
+        note.openHiHat ? 6800 : note.lane === 2 ? 6000 : note.lane === 3 ? 5000 : 4500,
+        now,
+      )
       bandpass.Q.setValueAtTime(1.2, now)
       const gain = context.createGain()
       gain.gain.setValueAtTime(0.0001, now)
-      gain.gain.exponentialRampToValueAtTime(0.45, now + 0.002)
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24)
+      gain.gain.exponentialRampToValueAtTime(note.openHiHat ? 0.5 : 0.45, now + 0.002)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + (note.openHiHat ? 0.34 : 0.24))
       noise.connect(bandpass)
       bandpass.connect(gain)
       gain.connect(out)
       noise.start(now)
-      noise.stop(now + 0.25)
+      noise.stop(now + (note.openHiHat ? 0.36 : 0.25))
     } else {
       const osc = context.createOscillator()
       const gain = context.createGain()
@@ -662,6 +674,7 @@ function App() {
                   | Yellow {result.meta.stats.yellow} | Blue {result.meta.stats.blue} |
                   Green {result.meta.stats.green}
                 </p>
+                <p>Detected open hi-hat notes: {openHiHatCount}</p>
                 <p>Source tracks: {result.meta.usedTrackNames.join(', ')}</p>
               </div>
 
@@ -843,7 +856,9 @@ function App() {
                       point.lane === 1
                         ? 'timeline-note lane-red'
                         : point.lane === 2
-                          ? 'timeline-note lane-yellow'
+                          ? point.openHiHat
+                            ? 'timeline-note lane-yellow open-hihat'
+                            : 'timeline-note lane-yellow'
                           : point.lane === 3
                             ? 'timeline-note lane-blue'
                             : 'timeline-note lane-green'
