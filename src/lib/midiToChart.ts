@@ -29,7 +29,7 @@ export interface ConversionMeta {
   sourceNoteHistogram: Array<{ midi: number; count: number }>
   unmappedHistogram: Array<{ midi: number; count: number }>
   kickSourceHistogram: Array<{ midi: number; count: number }>
-  mappedPreviewNotes: Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean }>
+  mappedPreviewNotes: Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }>
   maxTick: number
 }
 
@@ -44,6 +44,7 @@ interface MappedNote {
   lane: 0 | 1 | 2 | 3 | 4
   length: number
   cymbal: boolean
+  openHiHat: boolean
 }
 
 type MidiTrack = Midi['tracks'][number]
@@ -59,6 +60,7 @@ const BLUE_CYMBAL = new Set([51, 53, 59])
 const BLUE_TOM = new Set([45, 47])
 const GREEN_CYMBAL = new Set([49, 52, 55, 57])
 const GREEN_TOM = new Set([41, 43])
+const OPEN_HIHAT = new Set([26, 46])
 
 const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   {
@@ -132,32 +134,32 @@ function buildEventsSection(): string {
   return ['[Events]', '{', '  0 = E "section Intro"', '}'].join('\n')
 }
 
-function mapMidiNote(note: MidiNote): Pick<MappedNote, 'lane' | 'cymbal'> | null {
+function mapMidiNote(note: MidiNote): Pick<MappedNote, 'lane' | 'cymbal' | 'openHiHat'> | null {
   const midi = note.midi
 
   if (KICK.has(midi)) {
-    return { lane: 0, cymbal: false }
+    return { lane: 0, cymbal: false, openHiHat: false }
   }
   if (RED.has(midi)) {
-    return { lane: 1, cymbal: false }
+    return { lane: 1, cymbal: false, openHiHat: false }
   }
   if (YELLOW_CYMBAL.has(midi)) {
-    return { lane: 2, cymbal: true }
+    return { lane: 2, cymbal: true, openHiHat: OPEN_HIHAT.has(midi) }
   }
   if (YELLOW_TOM.has(midi)) {
-    return { lane: 2, cymbal: false }
+    return { lane: 2, cymbal: false, openHiHat: false }
   }
   if (BLUE_CYMBAL.has(midi)) {
-    return { lane: 3, cymbal: true }
+    return { lane: 3, cymbal: true, openHiHat: false }
   }
   if (BLUE_TOM.has(midi)) {
-    return { lane: 3, cymbal: false }
+    return { lane: 3, cymbal: false, openHiHat: false }
   }
   if (GREEN_CYMBAL.has(midi)) {
-    return { lane: 4, cymbal: true }
+    return { lane: 4, cymbal: true, openHiHat: false }
   }
   if (GREEN_TOM.has(midi)) {
-    return { lane: 4, cymbal: false }
+    return { lane: 4, cymbal: false, openHiHat: false }
   }
 
   return null
@@ -288,11 +290,12 @@ function buildOutputFileName(sourceFileName: string): string {
   return `${base}_prodrums.chart`
 }
 
-function buildPreviewNotes(notes: MappedNote[]): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean }> {
+function buildPreviewNotes(notes: MappedNote[]): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }> {
   return notes.map((note) => ({
     tick: note.tick,
     lane: note.lane,
     cymbal: note.cymbal,
+    openHiHat: note.openHiHat,
   }))
 }
 
@@ -344,6 +347,7 @@ function collectMappedNotes(
         lane: mapping.lane,
         length,
         cymbal: mapping.cymbal,
+        openHiHat: mapping.openHiHat,
       })
 
       if (mapping.lane === 0) stats.kick += 1
