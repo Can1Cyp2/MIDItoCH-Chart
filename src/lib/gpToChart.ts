@@ -634,6 +634,7 @@ function collectTrackMappedNotes(
   const mapped: GpMappedNote[] = []
   const ppq = data.ppq
   const midiNormalizationMap = data.tracks[trackIndex]?.inputToOutputMidi ?? {}
+  const manualMidiRemap = options.manualMidiRemap ?? {}
 
   let absoluteBarTick = 0
 
@@ -683,15 +684,16 @@ function collectTrackMappedNotes(
           }
 
           const normalizedMidi = midiNormalizationMap[note.midi] ?? note.midi
+          const remappedMidi = manualMidiRemap[normalizedMidi] ?? normalizedMidi
 
           sourceHistogram.set(normalizedMidi, (sourceHistogram.get(normalizedMidi) ?? 0) + 1)
 
-          const mappedLane = mapMidiNoteToLane(normalizedMidi)
+          const mappedLane = mapMidiNoteToLane(remappedMidi)
           if (!mappedLane) {
             stats.unmapped += 1
             unmappedHistogram.set(
-              normalizedMidi,
-              (unmappedHistogram.get(normalizedMidi) ?? 0) + 1,
+              remappedMidi,
+              (unmappedHistogram.get(remappedMidi) ?? 0) + 1,
             )
             continue
           }
@@ -712,7 +714,7 @@ function collectTrackMappedNotes(
           if (mappedLane.lane === 4) stats.green += 1
           if (mappedLane.cymbal && mappedLane.lane >= 2) stats.cymbalFlags += 1
           if (mappedLane.lane === 0) {
-            kickSourceHistogram.set(normalizedMidi, (kickSourceHistogram.get(normalizedMidi) ?? 0) + 1)
+            kickSourceHistogram.set(remappedMidi, (kickSourceHistogram.get(remappedMidi) ?? 0) + 1)
           }
         }
 

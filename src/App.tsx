@@ -13,6 +13,53 @@ const ACCEPTED_GP_EXTENSIONS = ['.gp', '.gpif', '.gpx']
 
 type InputKind = 'midi' | 'gp' | 'unknown'
 
+function parseManualMidiRemap(raw: string): { map: Record<number, number>; error: string | null } {
+  const map: Record<number, number> = {}
+  const lines = raw.split(/\r?\n/)
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (!line || line.startsWith('#')) {
+      continue
+    }
+
+    const parts = line
+      .split(/[;,]+/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+
+    for (const part of parts) {
+      const match = part.match(/^(\d{1,3})\s*(?:->|=|:)\s*(\d{1,3})$/)
+      if (!match) {
+        return {
+          map: {},
+          error: `Invalid remap rule on line ${i + 1}: "${line}". Use format like 31->38`,
+        }
+      }
+
+      const source = Number(match[1])
+      const target = Number(match[2])
+      if (
+        !Number.isInteger(source) ||
+        !Number.isInteger(target) ||
+        source < 0 ||
+        source > 127 ||
+        target < 0 ||
+        target > 127
+      ) {
+        return {
+          map: {},
+          error: `MIDI remap values must be between 0 and 127 (line ${i + 1}).`,
+        }
+      }
+
+      map[source] = target
+    }
+  }
+
+  return { map, error: null }
+}
+
 function gpTrackOptionLabel(track: GpInspectionResult['tracks'][number]): string {
   const filePart = track.fileTrackName || track.name || `Track ${track.id}`
   const official = track.officialName || track.type || 'Unknown'
@@ -32,12 +79,14 @@ function App() {
   const [inputKind, setInputKind] = useState<InputKind>('unknown')
   const [gpInfo, setGpInfo] = useState<GpInspectionResult | null>(null)
   const [selectedGpTrackId, setSelectedGpTrackId] = useState<string>('')
+  const [manualMidiRemapText, setManualMidiRemapText] = useState('')
   const [options, setOptions] = useState<ConvertOptions>({
     preferChannel10Only: true,
     emitCymbalMarkers: true,
     forceZeroLengthNotes: true,
     preserveStackedHits: true,
     difficulty: 'ExpertDrums',
+    manualMidiRemap: {},
   })
   const [isTimelinePlaying, setIsTimelinePlaying] = useState(false)
   const [currentTick, setCurrentTick] = useState(0)
@@ -429,6 +478,17 @@ function App() {
       return
     }
 
+    const remapParse = parseManualMidiRemap(manualMidiRemapText)
+    if (remapParse.error) {
+      setErrorMessage(remapParse.error)
+      return
+    }
+
+    const effectiveOptions: ConvertOptions = {
+      ...options,
+      manualMidiRemap: remapParse.map,
+    }
+
     setIsBusy(true)
     setErrorMessage(null)
 
@@ -438,9 +498,9 @@ function App() {
         if (!selectedGpTrackId) {
           throw new Error('Choose a GP track before converting.')
         }
-        converted = await convertGpToCloneHeroChart(selectedFile, selectedGpTrackId, options)
+        converted = await convertGpToCloneHeroChart(selectedFile, selectedGpTrackId, effectiveOptions)
       } else {
-        converted = await convertMidiToCloneHeroChart(selectedFile, options)
+        converted = await convertMidiToCloneHeroChart(selectedFile, effectiveOptions)
       }
 
       setResult(converted)
@@ -526,6 +586,10 @@ function App() {
             <div className="gp-track-box">
               <p className="meta-row">
                 GP Song: <strong>{gpInfo.title}</strong> by <strong>{gpInfo.artist}</strong>
+              </p>
+              <p className="gp-warning-note" role="status">
+                Notes are often missing when mapping from GP files. We are actively fixing this glitch.
+                MIDI files usually convert more reliably right now.
               </p>
               <label className="select-row">
                 Isolate Track / Part
@@ -621,6 +685,19 @@ function App() {
                 <option value="HardDrums">HardDrums</option>
                 <option value="ExpertDrums">ExpertDrums</option>
               </select>
+            </label>
+
+            <label className="select-row">
+              Manual MIDI remap rules (applies to MIDI and GP)
+              <textarea
+                className="remap-editor"
+                value={manualMidiRemapText}
+                onChange={(event) => setManualMidiRemapText(event.target.value)}
+                placeholder={'Examples:\n31->38\n44->42\n# one rule per line'}
+              />
+              <span className="hint-row">
+                Use one rule per line, with <strong>source-&gt;target</strong>. Values must be 0-127.
+              </span>
             </label>
           </div>
 

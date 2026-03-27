@@ -110,6 +110,17 @@
   padding: 0.65rem;
 }
 
+.gp-warning-note {
+  margin: 0.55rem 0 0.35rem;
+  border: 1px solid #efc282;
+  background: #fff8ee;
+  color: #7a4a00;
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .track-details-list {
   margin-top: 0.6rem;
   max-height: 132px;
@@ -150,6 +161,23 @@
   border-radius: 12px;
   padding: 0.5rem;
   background: #fff;
+}
+
+.remap-editor {
+  margin-top: 0;
+  min-height: 108px;
+  max-height: 200px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 0.83rem;
+  line-height: 1.4;
+  padding: 0.55rem;
+}
+
+.hint-row {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .action-row {
