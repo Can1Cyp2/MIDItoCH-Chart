@@ -40,7 +40,7 @@ Output format:
 
 This site currently focuses on drum chart conversion.
 
-The architecture is intentionally moving toward broader support so future updates can add conversion profiles for other instruments (for example, guitar, bass, keys, or other lane schemas) without replacing the entire pipeline.
+The architecture is intentionally moving toward broader support so future updates can add conversion profiles for other instruments (for example, guitar, bass, keys, or other) without replacing the entire pipeline.
 
 Current priority is improving GP drum reliability first, then generalizing the mapping layer for additional instrument types.
 
