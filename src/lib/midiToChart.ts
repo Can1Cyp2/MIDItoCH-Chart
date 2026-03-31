@@ -8,6 +8,7 @@ export interface ConvertOptions {
   forceZeroLengthNotes: boolean
   preserveStackedHits: boolean
   difficulty: DrumDifficulty
+  manualMidiRemap: Record<number, number>
 }
 
 export interface LaneStats {
@@ -76,6 +77,7 @@ const DEFAULT_OPTIONS: ConvertOptions = {
   forceZeroLengthNotes: true,
   preserveStackedHits: true,
   difficulty: 'ExpertDrums',
+  manualMidiRemap: {},
 }
 
 function sanitizeQuoted(value: string): string {
@@ -134,8 +136,7 @@ function buildEventsSection(): string {
   return ['[Events]', '{', '  0 = E "section Intro"', '}'].join('\n')
 }
 
-function mapMidiNote(note: MidiNote): Pick<MappedNote, 'lane' | 'cymbal' | 'openHiHat'> | null {
-  const midi = note.midi
+function mapMidiNumber(midi: number): Pick<MappedNote, 'lane' | 'cymbal' | 'openHiHat'> | null {
 
   if (KICK.has(midi)) {
     return { lane: 0, cymbal: false, openHiHat: false }
@@ -163,6 +164,10 @@ function mapMidiNote(note: MidiNote): Pick<MappedNote, 'lane' | 'cymbal' | 'open
   }
 
   return null
+}
+
+function mapMidiNote(note: MidiNote): Pick<MappedNote, 'lane' | 'cymbal' | 'openHiHat'> | null {
+  return mapMidiNumber(note.midi)
 }
 
 function scoreDrumTrack(track: MidiTrack): number {
@@ -325,15 +330,18 @@ function collectMappedNotes(
   const sourceHistogram = new Map<number, number>()
   const unmappedHistogram = new Map<number, number>()
   const kickSourceHistogram = new Map<number, number>()
+  const manualMidiRemap = options.manualMidiRemap ?? {}
 
   for (const track of tracks) {
     for (const note of track.notes) {
       sourceHistogram.set(note.midi, (sourceHistogram.get(note.midi) ?? 0) + 1)
 
-      const mapping = mapMidiNote(note)
+      const normalizedMidi = manualMidiRemap[note.midi] ?? note.midi
+
+      const mapping = mapMidiNumber(normalizedMidi)
       if (!mapping) {
         stats.unmapped += 1
-        unmappedHistogram.set(note.midi, (unmappedHistogram.get(note.midi) ?? 0) + 1)
+        unmappedHistogram.set(normalizedMidi, (unmappedHistogram.get(normalizedMidi) ?? 0) + 1)
         continue
       }
 
@@ -357,7 +365,7 @@ function collectMappedNotes(
       if (mapping.lane === 4) stats.green += 1
       if (mapping.cymbal && mapping.lane >= 2) stats.cymbalFlags += 1
       if (mapping.lane === 0) {
-        kickSourceHistogram.set(note.midi, (kickSourceHistogram.get(note.midi) ?? 0) + 1)
+        kickSourceHistogram.set(normalizedMidi, (kickSourceHistogram.get(normalizedMidi) ?? 0) + 1)
       }
     }
   }
