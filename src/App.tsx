@@ -81,12 +81,15 @@ function App() {
   const [selectedGpTrackId, setSelectedGpTrackId] = useState<string>('')
   const [manualMidiRemapText, setManualMidiRemapText] = useState('')
   const [options, setOptions] = useState<ConvertOptions>({
+    instrumentMode: 'drums',
     preferChannel10Only: true,
     emitCymbalMarkers: true,
     forceZeroLengthNotes: true,
     preserveStackedHits: true,
     difficulty: 'ExpertDrums',
     manualMidiRemap: {},
+    guitarMaxFret: 22,
+    bassMaxFret: 20,
   })
   const [isTimelinePlaying, setIsTimelinePlaying] = useState(false)
   const [currentTick, setCurrentTick] = useState(0)
@@ -107,19 +110,30 @@ function App() {
     return lines.slice(0, 120).join('\n')
   }, [result])
 
+  const isDrumMode = options.instrumentMode === 'drums'
+
   const firstMappedHits = useMemo(() => {
     if (!result) {
       return [] as string[]
     }
 
     const hits: string[] = []
-    const laneToName: Record<number, string> = {
-      0: 'Kick',
-      1: 'Snare',
-      2: 'Yellow',
-      3: 'Blue',
-      4: 'Green',
-    }
+    const laneToName: Record<number, string> =
+      result.meta.instrumentMode === 'drums'
+        ? {
+            0: 'Kick',
+            1: 'Snare',
+            2: 'Yellow',
+            3: 'Blue',
+            4: 'Green',
+          }
+        : {
+            0: 'Lane 0 (low fret)',
+            1: 'Lane 1',
+            2: 'Lane 2',
+            3: 'Lane 3',
+            4: 'Lane 4 (high fret)',
+          }
 
     for (const line of result.chartText.split('\n')) {
       const match = line.match(/=\s+N\s+(\d+)\s+/)
@@ -474,7 +488,7 @@ function App() {
 
   async function runConversion(): Promise<void> {
     if (!selectedFile) {
-      setErrorMessage('Choose a MIDI file first.')
+      setErrorMessage('Choose a source file first.')
       return
     }
 
@@ -537,15 +551,15 @@ function App() {
       <section className="hero-card">
         <div>
           <p className="kicker">MIDI to Clone Hero Converter</p>
-          <h1>Drum-first chart conversion for Clone Hero and Moonscraper</h1>
+          <h1>Convert MIDI/GP into drums, guitar, or bass Clone Hero charts</h1>
           <p className="lead">
-            Upload a drum MIDI and export a pro-drums ready <strong>.chart</strong>{' '}
-            using 4 lanes plus cymbal flags.
+            Choose an instrument mode and export a <strong>.chart</strong> with lane placement
+            derived from drum mapping or guitar/bass fretboard position.
           </p>
         </div>
         <div className="pill-row">
-          <span className="pill">4-lane pro drums</span>
-          <span className="pill">Cymbal markers</span>
+          <span className="pill">Drums + guitar + bass</span>
+          <span className="pill">Fretboard-aware string mapping</span>
           <span className="pill">Tempo + time signature sync</span>
         </div>
       </section>
@@ -618,6 +632,59 @@ function App() {
 
           <h2>2. Conversion Settings</h2>
           <div className="control-stack">
+            <label className="select-row">
+              Instrument mode
+              <select
+                value={options.instrumentMode}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    instrumentMode: event.target.value as ConvertOptions['instrumentMode'],
+                  }))
+                }
+              >
+                <option value="drums">Drums (Pro Drums)</option>
+                <option value="guitar">Guitar (ExpertSingle)</option>
+                <option value="bass">Bass (ExpertDoubleBass)</option>
+              </select>
+            </label>
+
+            {options.instrumentMode === 'guitar' ? (
+              <label className="select-row">
+                Guitar max fret
+                <input
+                  type="number"
+                  min={8}
+                  max={30}
+                  value={options.guitarMaxFret}
+                  onChange={(event) =>
+                    setOptions((prev) => ({
+                      ...prev,
+                      guitarMaxFret: Math.max(8, Math.min(30, Number(event.target.value) || 22)),
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
+
+            {options.instrumentMode === 'bass' ? (
+              <label className="select-row">
+                Bass max fret
+                <input
+                  type="number"
+                  min={8}
+                  max={28}
+                  value={options.bassMaxFret}
+                  onChange={(event) =>
+                    setOptions((prev) => ({
+                      ...prev,
+                      bassMaxFret: Math.max(8, Math.min(28, Number(event.target.value) || 20)),
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
+
             <label className="toggle-row">
               <input
                 type="checkbox"
@@ -632,19 +699,21 @@ function App() {
               Prefer channel 10 tracks only
             </label>
 
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={options.emitCymbalMarkers}
-                onChange={(event) =>
-                  setOptions((prev) => ({
-                    ...prev,
-                    emitCymbalMarkers: event.target.checked,
-                  }))
-                }
-              />
-              Emit pro-drums cymbal marker notes
-            </label>
+            {isDrumMode ? (
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={options.emitCymbalMarkers}
+                  onChange={(event) =>
+                    setOptions((prev) => ({
+                      ...prev,
+                      emitCymbalMarkers: event.target.checked,
+                    }))
+                  }
+                />
+                Emit pro-drums cymbal marker notes
+              </label>
+            ) : null}
 
             <label className="toggle-row">
               <input
@@ -674,18 +743,20 @@ function App() {
               Preserve stacked hits (nudge same-tick collisions)
             </label>
 
-            <label className="select-row">
-              Difficulty section
-              <select
-                value={options.difficulty}
-                onChange={(event) => setDifficulty(event.target.value as DrumDifficulty)}
-              >
-                <option value="EasyDrums">EasyDrums</option>
-                <option value="MediumDrums">MediumDrums</option>
-                <option value="HardDrums">HardDrums</option>
-                <option value="ExpertDrums">ExpertDrums</option>
-              </select>
-            </label>
+            {isDrumMode ? (
+              <label className="select-row">
+                Difficulty section
+                <select
+                  value={options.difficulty}
+                  onChange={(event) => setDifficulty(event.target.value as DrumDifficulty)}
+                >
+                  <option value="EasyDrums">EasyDrums</option>
+                  <option value="MediumDrums">MediumDrums</option>
+                  <option value="HardDrums">HardDrums</option>
+                  <option value="ExpertDrums">ExpertDrums</option>
+                </select>
+              </label>
+            ) : null}
 
             <label className="select-row">
               Manual MIDI remap rules (applies to MIDI and GP)
@@ -736,8 +807,14 @@ function App() {
                   <strong>{result.meta.ppq}</strong>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-label">Cymbal Flags</span>
-                  <strong>{result.meta.stats.cymbalFlags}</strong>
+                  <span className="stat-label">
+                    {result.meta.instrumentMode === 'drums' ? 'Cymbal Flags' : 'Median Fret'}
+                  </span>
+                  <strong>
+                    {result.meta.instrumentMode === 'drums'
+                      ? result.meta.stats.cymbalFlags
+                      : (result.meta.fretboardSummary?.medianFret ?? 0).toFixed(1)}
+                  </strong>
                 </div>
                 <div className="stat-card">
                   <span className="stat-label">Unmapped Notes</span>
@@ -746,12 +823,25 @@ function App() {
               </div>
 
               <div className="lane-breakdown">
-                <p>
-                  Lanes: Kick {result.meta.stats.kick} | Red {result.meta.stats.red}{' '}
-                  | Yellow {result.meta.stats.yellow} | Blue {result.meta.stats.blue} |
-                  Green {result.meta.stats.green}
-                </p>
-                <p>Detected open hi-hat notes: {openHiHatCount}</p>
+                {result.meta.instrumentMode === 'drums' ? (
+                  <>
+                    <p>
+                      Lanes: Kick {result.meta.stats.kick} | Red {result.meta.stats.red}{' '}
+                      | Yellow {result.meta.stats.yellow} | Blue {result.meta.stats.blue} |
+                      Green {result.meta.stats.green}
+                    </p>
+                    <p>Detected open hi-hat notes: {openHiHatCount}</p>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      Lanes (low -&gt; high fret): {result.meta.stats.laneCounts[0]} | {result.meta.stats.laneCounts[1]} | {result.meta.stats.laneCounts[2]} | {result.meta.stats.laneCounts[3]} | {result.meta.stats.laneCounts[4]}
+                    </p>
+                    <p>
+                      Fret range: {result.meta.fretboardSummary?.minFret ?? 0} - {result.meta.fretboardSummary?.maxUsedFret ?? 0} (avg {((result.meta.fretboardSummary?.averageFret ?? 0)).toFixed(2)})
+                    </p>
+                  </>
+                )}
                 <p>Source tracks: {result.meta.usedTrackNames.join(', ')}</p>
               </div>
 
@@ -952,11 +1042,19 @@ function App() {
       ) : null}
 
       <section className="legend">
-        <h2>Default Drum Mapping</h2>
-        <p>
-          Kick: 35/36 | Red: snare notes | Yellow: hi-hat + high tom | Blue:
-          ride/mid tom | Green: crash/floor tom. Cymbals emit note flags 66/67/68.
-        </p>
+        <h2>{isDrumMode ? 'Default Drum Mapping' : 'Stringed Mapping Heuristic'}</h2>
+        {isDrumMode ? (
+          <p>
+            Kick: 35/36 | Red: snare notes | Yellow: hi-hat + high tom | Blue:
+            ride/mid tom | Green: crash/floor tom. Cymbals emit note flags 66/67/68.
+          </p>
+        ) : (
+          <p>
+            Guitar/bass notes are assigned to probable strings and frets, then mapped to
+            5 lanes by absolute fret position. Lower-register songs bias to lower lanes,
+            and higher-register songs bias to higher lanes.
+          </p>
+        )}
       </section>
     </main>
   )
