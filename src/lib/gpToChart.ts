@@ -1,6 +1,15 @@
 import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
 import type { ConvertOptions, ConversionResult, DrumDifficulty, LaneStats } from './midiToChart'
+import {
+  buildFiveFretSection,
+  dedupeAndSortFiveFretNotes,
+  mapPitchedNotesToFiveFret,
+  type FretboardPlacementSummary,
+  type FiveFretNote,
+  type PitchedSourceNote,
+  type StringedInstrument,
+} from './stringedChart'
 
 interface GpTrackInfo {
   id: string
@@ -106,6 +115,34 @@ const XML_PARSER = new XMLParser({
   attributeNamePrefix: '@_',
   cdataPropName: '#cdata',
 })
+
+function emptyLaneStats(): LaneStats {
+  return {
+    kick: 0,
+    red: 0,
+    yellow: 0,
+    blue: 0,
+    green: 0,
+    laneCounts: [0, 0, 0, 0, 0],
+    cymbalFlags: 0,
+    openNotes: 0,
+    unmapped: 0,
+  }
+}
+
+function statsFromFiveLaneCounts(laneCounts: [number, number, number, number, number], unmapped: number): LaneStats {
+  return {
+    kick: laneCounts[0],
+    red: laneCounts[1],
+    yellow: laneCounts[2],
+    blue: laneCounts[3],
+    green: laneCounts[4],
+    laneCounts,
+    cymbalFlags: 0,
+    openNotes: 0,
+    unmapped,
+  }
+}
 
 function parseMidiNumberList(raw: unknown): number[] {
   if (typeof raw === 'number') {
@@ -375,7 +412,13 @@ function sanitizeQuoted(value: string): string {
   return value.replaceAll('"', "'")
 }
 
-function buildSongSection(ppq: number, title: string, artist: string): string {
+function buildSongSection(
+  ppq: number,
+  title: string,
+  artist: string,
+  instrumentMode: ConvertOptions['instrumentMode'],
+): string {
+  const player2 = instrumentMode === 'drums' ? 'drums' : instrumentMode
   return [
     '[Song]',
     '{',
@@ -386,7 +429,7 @@ function buildSongSection(ppq: number, title: string, artist: string): string {
     '  Year = ", 2026"',
     '  Offset = 0',
     `  Resolution = ${ppq}`,
-    '  Player2 = drums',
+    `  Player2 = ${player2}`,
     '  Difficulty = 0',
     '  PreviewStart = 0',
     '  PreviewEnd = 0',
@@ -618,15 +661,7 @@ function collectTrackMappedNotes(
   unmappedHistogram: Array<{ midi: number; count: number }>
   kickSourceHistogram: Array<{ midi: number; count: number }>
 } {
-  const stats: LaneStats = {
-    kick: 0,
-    red: 0,
-    yellow: 0,
-    blue: 0,
-    green: 0,
-    cymbalFlags: 0,
-    unmapped: 0,
-  }
+  const stats: LaneStats = emptyLaneStats()
 
   const sourceHistogram = new Map<number, number>()
   const unmappedHistogram = new Map<number, number>()
@@ -712,6 +747,7 @@ function collectTrackMappedNotes(
           if (mappedLane.lane === 2) stats.yellow += 1
           if (mappedLane.lane === 3) stats.blue += 1
           if (mappedLane.lane === 4) stats.green += 1
+          stats.laneCounts[mappedLane.lane] += 1
           if (mappedLane.cymbal && mappedLane.lane >= 2) stats.cymbalFlags += 1
           if (mappedLane.lane === 0) {
             kickSourceHistogram.set(remappedMidi, (kickSourceHistogram.get(remappedMidi) ?? 0) + 1)
@@ -737,6 +773,118 @@ function collectTrackMappedNotes(
     kickSourceHistogram: [...kickSourceHistogram.entries()]
       .map(([midi, count]) => ({ midi, count }))
       .sort((a, b) => b.count - a.count || a.midi - b.midi),
+  }
+}
+
+function collectTrackStringedMappedNotes(
+  data: GpParsedData,
+  trackIndex: number,
+  options: ConvertOptions,
+  instrumentMode: StringedInstrument,
+): {
+  notes: GpMappedNote[]
+  stats: LaneStats
+  sourceNoteHistogram: Array<{ midi: number; count: number }>
+  unmappedHistogram: Array<{ midi: number; count: number }>
+  kickSourceHistogram: Array<{ midi: number; count: number }>
+  fretboardSummary: FretboardPlacementSummary
+} {
+  const sourceHistogram = new Map<number, number>()
+  const ppq = data.ppq
+  const midiNormalizationMap = data.tracks[trackIndex]?.inputToOutputMidi ?? {}
+  const manualMidiRemap = options.manualMidiRemap ?? {}
+  const pitched: PitchedSourceNote[] = []
+
+  let absoluteBarTick = 0
+
+  for (let masterBarIndex = 0; masterBarIndex < data.masterBars.length; masterBarIndex += 1) {
+    const masterBar = data.masterBars[masterBarIndex]
+    const { numerator, denominator } = parseTimeSignature(masterBar.time)
+    const barTicks = (ppq * 4 * numerator) / denominator
+
+    const perTrackBarIds = splitRefIds(masterBar.bars)
+    const barId = perTrackBarIds[trackIndex]
+    if (!barId) {
+      absoluteBarTick += barTicks
+      continue
+    }
+
+    const bar = data.barsById.get(barId)
+    if (!bar) {
+      absoluteBarTick += barTicks
+      continue
+    }
+
+    const voiceIds = splitRefIds(bar.voices)
+
+    for (const voiceId of voiceIds) {
+      const voice = data.voicesById.get(voiceId)
+      if (!voice) {
+        continue
+      }
+
+      let voiceTick = absoluteBarTick
+      const beatIds = splitRefIds(voice.beats)
+
+      for (const beatId of beatIds) {
+        const beat = data.beatsById.get(beatId)
+        if (!beat) {
+          continue
+        }
+
+        const rhythm = data.rhythmsById.get(beat.rhythmRef)
+        const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
+        const noteIds = splitRefIds(beat.notes)
+
+        for (const noteId of noteIds) {
+          const note = data.notesById.get(noteId)
+          if (!note || note.midi == null) {
+            continue
+          }
+
+          const normalizedMidi = midiNormalizationMap[note.midi] ?? note.midi
+          const remappedMidi = manualMidiRemap[normalizedMidi] ?? normalizedMidi
+          sourceHistogram.set(remappedMidi, (sourceHistogram.get(remappedMidi) ?? 0) + 1)
+
+          pitched.push({
+            tick: Math.max(0, Math.round(voiceTick)),
+            length: options.forceZeroLengthNotes ? 0 : Math.max(0, Math.round(beatLength)),
+            midi: remappedMidi,
+          })
+        }
+
+        voiceTick += beatLength
+      }
+    }
+
+    absoluteBarTick += barTicks
+  }
+
+  const maxFret = instrumentMode === 'bass' ? options.bassMaxFret : options.guitarMaxFret
+  const mapped = mapPitchedNotesToFiveFret(pitched, instrumentMode, Math.max(8, maxFret))
+  const deduped: FiveFretNote[] = dedupeAndSortFiveFretNotes(mapped.notes, options.preserveStackedHits)
+
+  const laneCounts: [number, number, number, number, number] = [0, 0, 0, 0, 0]
+  const notes: GpMappedNote[] = deduped.map((note) => {
+    laneCounts[note.lane] += 1
+    return {
+      tick: note.tick,
+      lane: note.lane,
+      length: note.length,
+      cymbal: false,
+      openHiHat: false,
+    }
+  })
+
+  return {
+    notes,
+    stats: statsFromFiveLaneCounts(laneCounts, 0),
+    sourceNoteHistogram: [...sourceHistogram.entries()]
+      .map(([midi, count]) => ({ midi, count }))
+      .sort((a, b) => b.count - a.count || a.midi - b.midi),
+    unmappedHistogram: [],
+    kickSourceHistogram: [],
+    fretboardSummary: mapped.summary,
   }
 }
 
@@ -779,39 +927,51 @@ export async function convertGpToCloneHeroChart(
   }
 
   const selectedTrack = data.tracks[trackIndex]
-  const { notes, stats, sourceNoteHistogram, unmappedHistogram, kickSourceHistogram } = collectTrackMappedNotes(
-    data,
-    trackIndex,
-    options,
-  )
+  const isStringed = options.instrumentMode === 'guitar' || options.instrumentMode === 'bass'
+  const collected = isStringed
+    ? collectTrackStringedMappedNotes(
+        data,
+        trackIndex,
+        options,
+        options.instrumentMode as StringedInstrument,
+      )
+    : {
+        ...collectTrackMappedNotes(data, trackIndex, options),
+        fretboardSummary: null,
+      }
+
+  const {
+    notes,
+    stats,
+    sourceNoteHistogram,
+    unmappedHistogram,
+    kickSourceHistogram,
+    fretboardSummary,
+  } = collected
 
   if (notes.length === 0) {
-    const likely = data.tracks
-      .filter((track) => track.isDrums)
-      .map((track) => track.name)
-      .slice(0, 4)
+    if (isStringed) {
+      throw new Error('No pitched notes mapped from the selected GP track for guitar/bass mode.')
+    }
 
+    const likely = data.tracks.filter((track) => track.isDrums).map((track) => track.name).slice(0, 4)
     if (likely.length > 0) {
-      throw new Error(
-        `No drum notes mapped from the selected GP track. Try one of: ${likely.join(', ')}`,
-      )
+      throw new Error(`No drum notes mapped from the selected GP track. Try one of: ${likely.join(', ')}`)
     }
 
     throw new Error('No drum notes mapped from the selected GP track.')
   }
 
   const chartText = [
-    buildSongSection(data.ppq, data.title, data.artist),
+    buildSongSection(data.ppq, data.title, data.artist, options.instrumentMode),
     '',
     buildSyncTrackSection(data.ppq, data.masterBars, data.tempoEvents),
     '',
     buildEventsSection(),
     '',
-    buildDrumSection(
-      notes,
-      options.difficulty as DrumDifficulty,
-      options.emitCymbalMarkers,
-    ),
+    isStringed
+      ? buildFiveFretSection(notes, options.instrumentMode as StringedInstrument)
+      : buildDrumSection(notes, options.difficulty as DrumDifficulty, options.emitCymbalMarkers),
     '',
   ].join('\n')
 
@@ -819,9 +979,16 @@ export async function convertGpToCloneHeroChart(
   const displayTrackName = trackDisplayName(selectedTrack)
   const safeTrack = displayTrackName.replace(/[^a-zA-Z0-9-_]+/g, '_')
 
+  const suffix =
+    options.instrumentMode === 'guitar'
+      ? 'guitar'
+      : options.instrumentMode === 'bass'
+        ? 'bass'
+        : 'prodrums'
+
   return {
     chartText,
-    outputFileName: `${base}_${safeTrack || 'track'}_prodrums.chart`,
+    outputFileName: `${base}_${safeTrack || 'track'}_${suffix}.chart`,
     meta: {
       sourceFileName: file.name,
       ppq: data.ppq,
@@ -831,6 +998,8 @@ export async function convertGpToCloneHeroChart(
       sourceNoteHistogram,
       unmappedHistogram,
       kickSourceHistogram,
+      instrumentMode: options.instrumentMode,
+      fretboardSummary,
       mappedPreviewNotes: buildPreviewNotes(notes),
       maxTick: notes.at(-1)?.tick ?? 0,
     },

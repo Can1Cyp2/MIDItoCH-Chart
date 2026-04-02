@@ -1,14 +1,26 @@
 import { Midi } from '@tonejs/midi'
+import {
+  buildFiveFretSection,
+  dedupeAndSortFiveFretNotes,
+  mapPitchedNotesToFiveFret,
+  type FretboardPlacementSummary,
+  type FiveFretNote,
+  type PitchedSourceNote,
+} from './stringedChart'
 
 export type DrumDifficulty = 'EasyDrums' | 'MediumDrums' | 'HardDrums' | 'ExpertDrums'
+export type InstrumentMode = 'drums' | 'guitar' | 'bass'
 
 export interface ConvertOptions {
+  instrumentMode: InstrumentMode
   preferChannel10Only: boolean
   emitCymbalMarkers: boolean
   forceZeroLengthNotes: boolean
   preserveStackedHits: boolean
   difficulty: DrumDifficulty
   manualMidiRemap: Record<number, number>
+  guitarMaxFret: number
+  bassMaxFret: number
 }
 
 export interface LaneStats {
@@ -17,7 +29,9 @@ export interface LaneStats {
   yellow: number
   blue: number
   green: number
+  laneCounts: [number, number, number, number, number]
   cymbalFlags: number
+  openNotes: number
   unmapped: number
 }
 
@@ -30,6 +44,8 @@ export interface ConversionMeta {
   sourceNoteHistogram: Array<{ midi: number; count: number }>
   unmappedHistogram: Array<{ midi: number; count: number }>
   kickSourceHistogram: Array<{ midi: number; count: number }>
+  instrumentMode: InstrumentMode
+  fretboardSummary: FretboardPlacementSummary | null
   mappedPreviewNotes: Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }>
   maxTick: number
 }
@@ -52,6 +68,8 @@ type MidiTrack = Midi['tracks'][number]
 type MidiNote = MidiTrack['notes'][number]
 
 const DRUM_TRACK_NAME_PATTERN = /(drum|kit|perc|rhythm)/i
+const GUITAR_TRACK_NAME_PATTERN = /(guitar|lead|rhythm|strum|pluck)/i
+const BASS_TRACK_NAME_PATTERN = /(bass|finger|picked bass|slap)/i
 
 const KICK = new Set([35, 36])
 const RED = new Set([31, 37, 38, 39, 40])
@@ -63,6 +81,34 @@ const GREEN_CYMBAL = new Set([49, 52, 55, 57])
 const GREEN_TOM = new Set([41, 43])
 const OPEN_HIHAT = new Set([26, 46])
 
+function emptyLaneStats(): LaneStats {
+  return {
+    kick: 0,
+    red: 0,
+    yellow: 0,
+    blue: 0,
+    green: 0,
+    laneCounts: [0, 0, 0, 0, 0],
+    cymbalFlags: 0,
+    openNotes: 0,
+    unmapped: 0,
+  }
+}
+
+function statsFromFiveLaneCounts(laneCounts: [number, number, number, number, number], unmapped: number): LaneStats {
+  return {
+    kick: laneCounts[0],
+    red: laneCounts[1],
+    yellow: laneCounts[2],
+    blue: laneCounts[3],
+    green: laneCounts[4],
+    laneCounts,
+    cymbalFlags: 0,
+    openNotes: 0,
+    unmapped,
+  }
+}
+
 const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   {
     2: 66,
@@ -72,20 +118,24 @@ const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
 ]
 
 const DEFAULT_OPTIONS: ConvertOptions = {
+  instrumentMode: 'drums',
   preferChannel10Only: true,
   emitCymbalMarkers: true,
   forceZeroLengthNotes: true,
   preserveStackedHits: true,
   difficulty: 'ExpertDrums',
   manualMidiRemap: {},
+  guitarMaxFret: 22,
+  bassMaxFret: 20,
 }
 
 function sanitizeQuoted(value: string): string {
   return value.replaceAll('"', "'")
 }
 
-function buildSongSection(ppq: number, name: string): string {
+function buildSongSection(ppq: number, name: string, instrumentMode: InstrumentMode): string {
   const safeName = sanitizeQuoted(name)
+  const player2 = instrumentMode === 'drums' ? 'drums' : instrumentMode
   return [
     '[Song]',
     '{',
@@ -96,7 +146,7 @@ function buildSongSection(ppq: number, name: string): string {
     '  Year = ", 2026"',
     '  Offset = 0',
     `  Resolution = ${ppq}`,
-    '  Player2 = drums',
+    `  Player2 = ${player2}`,
     '  Difficulty = 0',
     '  PreviewStart = 0',
     '  PreviewEnd = 0',
@@ -226,6 +276,114 @@ function pickDrumTracks(midi: Midi, preferChannel10Only: boolean): MidiTrack[] {
   return pickBestTrack(nonEmpty)
 }
 
+function scoreStringedTrack(track: MidiTrack, instrumentMode: 'guitar' | 'bass'): number {
+  const isBass = instrumentMode === 'bass'
+  const namePattern = isBass ? BASS_TRACK_NAME_PATTERN : GUITAR_TRACK_NAME_PATTERN
+  const nameBonus = namePattern.test(track.name) ? 700 : 0
+  const nonDrumBonus = track.channel !== 9 ? 300 : 0
+  const pitchSpread = track.notes.length
+    ? Math.max(...track.notes.map((note) => note.midi)) - Math.min(...track.notes.map((note) => note.midi))
+    : 0
+
+  return track.notes.length * 100 + pitchSpread * 5 + nameBonus + nonDrumBonus
+}
+
+function pickBestStringedTrack(tracks: MidiTrack[], instrumentMode: 'guitar' | 'bass'): MidiTrack[] {
+  if (tracks.length <= 1) {
+    return tracks
+  }
+
+  const ranked = [...tracks].sort((a, b) => {
+    const scoreDiff = scoreStringedTrack(b, instrumentMode) - scoreStringedTrack(a, instrumentMode)
+    if (scoreDiff !== 0) {
+      return scoreDiff
+    }
+    return b.notes.length - a.notes.length
+  })
+
+  return ranked.slice(0, 1)
+}
+
+function pickStringedTracks(midi: Midi, instrumentMode: 'guitar' | 'bass'): MidiTrack[] {
+  const nonDrumTracks = midi.tracks.filter((track) => track.channel !== 9 && track.notes.length > 0)
+  const pattern = instrumentMode === 'bass' ? BASS_TRACK_NAME_PATTERN : GUITAR_TRACK_NAME_PATTERN
+  const named = nonDrumTracks.filter((track) => pattern.test(track.name))
+
+  if (named.length > 0) {
+    return pickBestStringedTrack(named, instrumentMode)
+  }
+
+  if (nonDrumTracks.length > 0) {
+    return pickBestStringedTrack(nonDrumTracks, instrumentMode)
+  }
+
+  const fallback = midi.tracks.filter((track) => track.notes.length > 0)
+  if (fallback.length === 0) {
+    return []
+  }
+
+  return pickBestStringedTrack(fallback, instrumentMode)
+}
+
+function collectStringedMappedNotes(
+  midi: Midi,
+  options: ConvertOptions,
+  instrumentMode: 'guitar' | 'bass',
+): {
+  notes: MappedNote[]
+  stats: LaneStats
+  usedTrackNames: string[]
+  sourceNoteHistogram: Array<{ midi: number; count: number }>
+  unmappedHistogram: Array<{ midi: number; count: number }>
+  kickSourceHistogram: Array<{ midi: number; count: number }>
+  fretboardSummary: FretboardPlacementSummary
+} {
+  const tracks = pickStringedTracks(midi, instrumentMode)
+  const sourceHistogram = new Map<number, number>()
+  const manualMidiRemap = options.manualMidiRemap ?? {}
+  const pitched: PitchedSourceNote[] = []
+
+  for (const track of tracks) {
+    for (const note of track.notes) {
+      const normalizedMidi = manualMidiRemap[note.midi] ?? note.midi
+      sourceHistogram.set(normalizedMidi, (sourceHistogram.get(normalizedMidi) ?? 0) + 1)
+      pitched.push({
+        tick: Math.max(0, Math.round(note.ticks)),
+        length: options.forceZeroLengthNotes ? 0 : Math.max(0, Math.round(note.durationTicks || 0)),
+        midi: normalizedMidi,
+      })
+    }
+  }
+
+  const maxFret = instrumentMode === 'bass' ? options.bassMaxFret : options.guitarMaxFret
+  const mapped = mapPitchedNotesToFiveFret(pitched, instrumentMode, Math.max(8, maxFret))
+  const deduped: FiveFretNote[] = dedupeAndSortFiveFretNotes(mapped.notes, options.preserveStackedHits)
+
+  const laneCounts: [number, number, number, number, number] = [0, 0, 0, 0, 0]
+  const notes: MappedNote[] = deduped.map((note) => {
+    laneCounts[note.lane] += 1
+    return {
+      tick: note.tick,
+      lane: note.lane,
+      length: note.length,
+      cymbal: false,
+      openHiHat: false,
+    }
+  })
+
+  return {
+    notes,
+    stats: statsFromFiveLaneCounts(laneCounts, 0),
+    usedTrackNames: tracks.map((track, index) => track.name || `Track ${index + 1}`),
+    sourceNoteHistogram: [...sourceHistogram.entries()]
+      .map(([midiNumber, count]) => ({ midi: midiNumber, count }))
+      .sort((a, b) => b.count - a.count || a.midi - b.midi),
+    unmappedHistogram: [],
+    kickSourceHistogram: [],
+    fretboardSummary: mapped.summary,
+  }
+}
+
 function buildDrumSection(
   mappedNotes: MappedNote[],
   difficulty: DrumDifficulty,
@@ -290,8 +448,14 @@ function dedupeAndSort(notes: MappedNote[], preserveStackedHits: boolean): Mappe
   return [...merged.values()]
 }
 
-function buildOutputFileName(sourceFileName: string): string {
+function buildOutputFileName(sourceFileName: string, instrumentMode: InstrumentMode): string {
   const base = sourceFileName.replace(/\.[^/.]+$/, '')
+  if (instrumentMode === 'guitar') {
+    return `${base}_guitar.chart`
+  }
+  if (instrumentMode === 'bass') {
+    return `${base}_bass.chart`
+  }
   return `${base}_prodrums.chart`
 }
 
@@ -316,15 +480,7 @@ function collectMappedNotes(
   kickSourceHistogram: Array<{ midi: number; count: number }>
 } {
   const tracks = pickDrumTracks(midi, options.preferChannel10Only)
-  const stats: LaneStats = {
-    kick: 0,
-    red: 0,
-    yellow: 0,
-    blue: 0,
-    green: 0,
-    cymbalFlags: 0,
-    unmapped: 0,
-  }
+  const stats: LaneStats = emptyLaneStats()
 
   const mapped: MappedNote[] = []
   const sourceHistogram = new Map<number, number>()
@@ -363,6 +519,7 @@ function collectMappedNotes(
       if (mapping.lane === 2) stats.yellow += 1
       if (mapping.lane === 3) stats.blue += 1
       if (mapping.lane === 4) stats.green += 1
+      stats.laneCounts[mapping.lane] += 1
       if (mapping.cymbal && mapping.lane >= 2) stats.cymbalFlags += 1
       if (mapping.lane === 0) {
         kickSourceHistogram.set(normalizedMidi, (kickSourceHistogram.get(normalizedMidi) ?? 0) + 1)
@@ -403,34 +560,48 @@ export async function convertMidiToCloneHeroChart(
   }
 
   const ppq = Math.max(1, Math.round(midi.header.ppq || 192))
-  const { notes, stats, usedTrackNames, sourceNoteHistogram, unmappedHistogram, kickSourceHistogram } =
-    collectMappedNotes(midi, options)
+  const isStringed = options.instrumentMode === 'guitar' || options.instrumentMode === 'bass'
+  const collected = isStringed
+    ? collectStringedMappedNotes(midi, options, options.instrumentMode as 'guitar' | 'bass')
+    : {
+        ...collectMappedNotes(midi, options),
+        fretboardSummary: null,
+      }
+
+  const {
+    notes,
+    stats,
+    usedTrackNames,
+    sourceNoteHistogram,
+    unmappedHistogram,
+    kickSourceHistogram,
+    fretboardSummary,
+  } = collected
 
   if (notes.length === 0) {
-    throw new Error(
-      'No supported drum notes were found. Make sure your MIDI contains drum notes (channel 10 recommended).',
-    )
+    if (isStringed) {
+      throw new Error('No pitched notes were found for the selected guitar/bass mode.')
+    }
+    throw new Error('No supported drum notes were found. Make sure your MIDI contains drum notes (channel 10 recommended).')
   }
 
   const title = file.name.replace(/\.[^/.]+$/, '')
   const chartText = [
-    buildSongSection(ppq, title),
+    buildSongSection(ppq, title, options.instrumentMode),
     '',
     buildSyncTrackSection(midi),
     '',
     buildEventsSection(),
     '',
-    buildDrumSection(
-      notes,
-      options.difficulty,
-      options.emitCymbalMarkers,
-    ),
+    isStringed
+      ? buildFiveFretSection(notes, options.instrumentMode as 'guitar' | 'bass')
+      : buildDrumSection(notes, options.difficulty, options.emitCymbalMarkers),
     '',
   ].join('\n')
 
   return {
     chartText,
-    outputFileName: buildOutputFileName(file.name),
+    outputFileName: buildOutputFileName(file.name, options.instrumentMode),
     meta: {
       sourceFileName: file.name,
       ppq,
@@ -440,6 +611,8 @@ export async function convertMidiToCloneHeroChart(
       sourceNoteHistogram,
       unmappedHistogram,
       kickSourceHistogram,
+      instrumentMode: options.instrumentMode,
+      fretboardSummary,
       mappedPreviewNotes: buildPreviewNotes(notes),
       maxTick: notes.at(-1)?.tick ?? 0,
     },
