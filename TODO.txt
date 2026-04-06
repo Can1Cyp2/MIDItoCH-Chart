@@ -1,0 +1,9 @@
+1. Add favicon, icon, etc.
+2. Improve design and layout of website. Fluid for different monitor types.
+3. Make website look more like classic Rock Band / Guitar Hero.
+4. Add visual remapping for midi notes (clicking on a note in the UI should allow remapping it to a different note on the chart fretboard, but users will likely have to recreate the chart, so add a pop up that shows the current chart does not have the new mappings).
+5. Make creating tabs for different charts look better, guitar icon for guitar charts, drum icon for drum charts, etc.
+6. Add a "How to Use" page with instructions and tips for using the website.
+7. Allow users to take multiple parts in a midi/gp file, etc. and then create a single chart with the multiple parts (guitar and drums).
+8. Add a BPM to the chart player at the bottom. 
+9. Add sounds to the chart player at the bottom, so users can hear the notes as they click on them. Drum notes for drums and guitar notes for guitar, etc.
