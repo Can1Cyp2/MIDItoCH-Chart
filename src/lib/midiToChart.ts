@@ -21,6 +21,19 @@ export interface ConvertOptions {
   manualMidiRemap: Record<number, number>
   guitarMaxFret: number
   bassMaxFret: number
+  midiTrackIndices?: number[]
+}
+
+export interface MidiInspectionTrack {
+  index: number
+  name: string
+  channel: number | null
+  noteCount: number
+}
+
+export interface MidiInspectionResult {
+  ppq: number
+  tracks: MidiInspectionTrack[]
 }
 
 export interface LaneStats {
@@ -127,6 +140,7 @@ const DEFAULT_OPTIONS: ConvertOptions = {
   manualMidiRemap: {},
   guitarMaxFret: 22,
   bassMaxFret: 20,
+  midiTrackIndices: undefined,
 }
 
 function sanitizeQuoted(value: string): string {
@@ -325,6 +339,38 @@ function pickStringedTracks(midi: Midi, instrumentMode: 'guitar' | 'bass'): Midi
   return pickBestStringedTrack(fallback, instrumentMode)
 }
 
+function normalizedTrackIndices(indices: number[] | undefined): number[] {
+  if (!indices || indices.length === 0) {
+    return []
+  }
+
+  const unique = new Set<number>()
+  for (const value of indices) {
+    if (Number.isInteger(value) && value >= 0) {
+      unique.add(value)
+    }
+  }
+
+  return [...unique].sort((a, b) => a - b)
+}
+
+function tracksFromIndices(midi: Midi, indices: number[] | undefined): MidiTrack[] {
+  const chosen = normalizedTrackIndices(indices)
+  if (chosen.length === 0) {
+    return []
+  }
+
+  const tracks: MidiTrack[] = []
+  for (const index of chosen) {
+    const track = midi.tracks[index]
+    if (track && track.notes.length > 0) {
+      tracks.push(track)
+    }
+  }
+
+  return tracks
+}
+
 function collectStringedMappedNotes(
   midi: Midi,
   options: ConvertOptions,
@@ -338,12 +384,13 @@ function collectStringedMappedNotes(
   kickSourceHistogram: Array<{ midi: number; count: number }>
   fretboardSummary: FretboardPlacementSummary
 } {
-  const tracks = pickStringedTracks(midi, instrumentMode)
+  const tracks = tracksFromIndices(midi, options.midiTrackIndices)
+  const activeTracks = tracks.length > 0 ? tracks : pickStringedTracks(midi, instrumentMode)
   const sourceHistogram = new Map<number, number>()
   const manualMidiRemap = options.manualMidiRemap ?? {}
   const pitched: PitchedSourceNote[] = []
 
-  for (const track of tracks) {
+  for (const track of activeTracks) {
     for (const note of track.notes) {
       const normalizedMidi = manualMidiRemap[note.midi] ?? note.midi
       sourceHistogram.set(normalizedMidi, (sourceHistogram.get(normalizedMidi) ?? 0) + 1)
@@ -374,7 +421,7 @@ function collectStringedMappedNotes(
   return {
     notes,
     stats: statsFromFiveLaneCounts(laneCounts, 0),
-    usedTrackNames: tracks.map((track, index) => track.name || `Track ${index + 1}`),
+    usedTrackNames: activeTracks.map((track, index) => track.name || `Track ${index + 1}`),
     sourceNoteHistogram: [...sourceHistogram.entries()]
       .map(([midiNumber, count]) => ({ midi: midiNumber, count }))
       .sort((a, b) => b.count - a.count || a.midi - b.midi),
@@ -479,7 +526,8 @@ function collectMappedNotes(
   unmappedHistogram: Array<{ midi: number; count: number }>
   kickSourceHistogram: Array<{ midi: number; count: number }>
 } {
-  const tracks = pickDrumTracks(midi, options.preferChannel10Only)
+  const tracks = tracksFromIndices(midi, options.midiTrackIndices)
+  const activeTracks = tracks.length > 0 ? tracks : pickDrumTracks(midi, options.preferChannel10Only)
   const stats: LaneStats = emptyLaneStats()
 
   const mapped: MappedNote[] = []
@@ -488,7 +536,7 @@ function collectMappedNotes(
   const kickSourceHistogram = new Map<number, number>()
   const manualMidiRemap = options.manualMidiRemap ?? {}
 
-  for (const track of tracks) {
+  for (const track of activeTracks) {
     for (const note of track.notes) {
       sourceHistogram.set(note.midi, (sourceHistogram.get(note.midi) ?? 0) + 1)
 
@@ -530,7 +578,7 @@ function collectMappedNotes(
   return {
     notes: dedupeAndSort(mapped, options.preserveStackedHits),
     stats,
-    usedTrackNames: tracks.map((track, index) => track.name || `Track ${index + 1}`),
+    usedTrackNames: activeTracks.map((track, index) => track.name || `Track ${index + 1}`),
     sourceNoteHistogram: [...sourceHistogram.entries()]
       .map(([midiNumber, count]) => ({ midi: midiNumber, count }))
       .sort((a, b) => b.count - a.count || a.midi - b.midi),
@@ -540,6 +588,21 @@ function collectMappedNotes(
     kickSourceHistogram: [...kickSourceHistogram.entries()]
       .map(([midiNumber, count]) => ({ midi: midiNumber, count }))
       .sort((a, b) => b.count - a.count || a.midi - b.midi),
+  }
+}
+
+export async function inspectMidiFile(file: File): Promise<MidiInspectionResult> {
+  const arrayBuffer = await file.arrayBuffer()
+  const midi = new Midi(arrayBuffer)
+
+  return {
+    ppq: Math.max(1, Math.round(midi.header.ppq || 192)),
+    tracks: midi.tracks.map((track, index) => ({
+      index,
+      name: track.name?.trim() || `Track ${index + 1}`,
+      channel: Number.isInteger(track.channel) ? track.channel : null,
+      noteCount: track.notes.length,
+    })),
   }
 }
 

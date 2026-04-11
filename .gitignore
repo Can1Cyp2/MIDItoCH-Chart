@@ -39,3 +39,18 @@ TODO.txt
 exports/
 samples/
 tmp/
+
+# Vite/build caches and reports
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS/local scratch artifacts
+Thumbs.db
+*.tmp
+*.temp
