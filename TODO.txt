@@ -1,9 +1,14 @@
-1. Add favicon, icon, etc.
-2. Improve design and layout of website. Fluid for different monitor types.
-3. Make website look more like classic Rock Band / Guitar Hero.
+1. [DONE]Add favicon, icon, etc.
+2. [DONE] Improve design and layout of website. Fluid for different monitor types.
+3. [DONE] Make website look more like classic Rock Band / Guitar Hero.
 4. Add visual remapping for midi notes (clicking on a note in the UI should allow remapping it to a different note on the chart fretboard, but users will likely have to recreate the chart, so add a pop up that shows the current chart does not have the new mappings).
 5. Make creating tabs for different charts look better, guitar icon for guitar charts, drum icon for drum charts, etc.
 6. Add a "How to Use" page with instructions and tips for using the website.
 7. Allow users to take multiple parts in a midi/gp file, etc. and then create a single chart with the multiple parts (guitar and drums).
 8. Add a BPM to the chart player at the bottom. 
 9. Add sounds to the chart player at the bottom, so users can hear the notes as they click on them. Drum notes for drums and guitar notes for guitar, etc.
+10. Add more coherent instrument picking, so users can select the instrument they want to create a chart for based on the available tracks in the midi/gp file, 
+    and then only see the notes for that instrument when creating the chart. This will also help with the multiple parts feature mentioned above.
+11. (continue of 11:) If midi files or GP files has tracks not named then there is no auto instrument selection, so users need to choose track and instrument manually. 
+     If tracks have the word "guitar" in them then they will be automatically selected for guitar charts, if they have the word "drum" or similar words in them then they will be automatically selected for drum charts, etc. 
+     But users can manually select tracks and instruments if they want to, and they can also select multiple tracks for a single chart if they want to create a chart with multiple parts.

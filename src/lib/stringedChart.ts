@@ -39,6 +39,35 @@ function laneFromFret(fret: number, maxFret: number): 0 | 1 | 2 | 3 | 4 {
   return lane as 0 | 1 | 2 | 3 | 4
 }
 
+function laneFromRelativeFret(fret: number, minFret: number, maxFret: number): 0 | 1 | 2 | 3 | 4 {
+  const span = Math.max(1, maxFret - minFret)
+  const normalized = clamp((fret - minFret) / span, 0, 1)
+  const lane = clamp(Math.floor(normalized * 5), 0, 4)
+  return lane as 0 | 1 | 2 | 3 | 4
+}
+
+function buildLaneMapForNarrowRange(assignedFrets: number[]): Map<number, 0 | 1 | 2 | 3 | 4> {
+  const uniqueFrets = [...new Set(assignedFrets)].sort((a, b) => a - b)
+  const laneMap = new Map<number, 0 | 1 | 2 | 3 | 4>()
+
+  if (uniqueFrets.length === 0) {
+    return laneMap
+  }
+
+  if (uniqueFrets.length === 1) {
+    laneMap.set(uniqueFrets[0], 2)
+    return laneMap
+  }
+
+  const divisor = uniqueFrets.length - 1
+  for (let i = 0; i < uniqueFrets.length; i += 1) {
+    const lane = clamp(Math.round((i / divisor) * 4), 0, 4) as 0 | 1 | 2 | 3 | 4
+    laneMap.set(uniqueFrets[i], lane)
+  }
+
+  return laneMap
+}
+
 function candidatesForPitch(
   midi: number,
   tuning: number[],
@@ -128,17 +157,15 @@ export function mapPitchedNotesToFiveFret(
   let preferredFret = clamp(Math.round(pitchMedian - centerString), 0, maxFret)
 
   const assignedFrets: number[] = []
-  const out: FiveFretNote[] = []
+  const placements: Array<{ tick: number; length: number; fret: number }> = []
   let previous: FretCandidate | null = null
 
   for (const note of sorted) {
     const assignment = chooseCandidate(note.midi, tuning, maxFret, preferredFret, previous)
-    const lane = laneFromFret(assignment.fret, maxFret)
-
-    out.push({
+    placements.push({
       tick: note.tick,
       length: note.length,
-      lane,
+      fret: assignment.fret,
     })
 
     assignedFrets.push(assignment.fret)
@@ -148,10 +175,26 @@ export function mapPitchedNotesToFiveFret(
 
   const minFret = assignedFrets.length ? Math.min(...assignedFrets) : 0
   const maxUsedFret = assignedFrets.length ? Math.max(...assignedFrets) : 0
+  const usedSpan = maxUsedFret - minFret
   const averageFret =
     assignedFrets.length > 0
       ? assignedFrets.reduce((sum, value) => sum + value, 0) / assignedFrets.length
       : 0
+  const narrowRangeLaneMap = buildLaneMapForNarrowRange(assignedFrets)
+
+  const out: FiveFretNote[] = placements.map((placement) => {
+    const lane =
+      usedSpan <= 4
+        ? (narrowRangeLaneMap.get(placement.fret) ?? laneFromRelativeFret(placement.fret, minFret, maxUsedFret))
+        : maxUsedFret > minFret
+          ? laneFromRelativeFret(placement.fret, minFret, maxUsedFret)
+          : laneFromFret(placement.fret, maxFret)
+    return {
+      tick: placement.tick,
+      length: placement.length,
+      lane,
+    }
+  })
 
   return {
     notes: out,
