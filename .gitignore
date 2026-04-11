@@ -23,3 +23,19 @@ dist-ssr
 *.sln
 *.sw?
 tmp-*.cjs
+
+# Local/private notes and scratch files
+TODO.txt
+*.todo
+
+# Local source/test media files
+*.mid
+*.midi
+*.gp
+*.gpif
+*.gpx
+
+# Local export/test artifacts
+exports/
+samples/
+tmp/

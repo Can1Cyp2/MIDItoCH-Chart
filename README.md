@@ -140,14 +140,6 @@ npm run build
 npm run preview
 ```
 
-Deploy output to `docs/` (for GitHub Pages configured to main branch + `/docs`):
-
-```bash
-npm run deploy
-```
-
-This command builds the app and copies `dist/` into `docs/`.
-
 ## Notes For Developers
 
 - MIDI conversion logic is implemented in `src/lib/midiToChart.ts`.
