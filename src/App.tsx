@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   convertMidiToCloneHeroChart,
+  inspectMidiFile,
   type ConvertOptions,
   type ConversionResult,
   type DrumDifficulty,
+  type MidiInspectionResult,
 } from './lib/midiToChart'
 import { convertGpToCloneHeroChart, inspectGpFile, type GpInspectionResult } from './lib/gpToChart'
+import siteIcon from './assets/fret_icon.png'
 import './App.css'
 
 const ACCEPTED_MIDI_EXTENSIONS = ['.mid', '.midi']
@@ -70,6 +73,46 @@ function gpTrackOptionLabel(track: GpInspectionResult['tracks'][number]): string
   return `${base.slice(0, 69)}...`
 }
 
+function suggestMidiTrackIndices(
+  info: MidiInspectionResult,
+  instrumentMode: ConvertOptions['instrumentMode'],
+  preferChannel10Only: boolean,
+): number[] {
+  const nonEmpty = info.tracks.filter((track) => track.noteCount > 0)
+  if (nonEmpty.length === 0) {
+    return []
+  }
+
+  if (instrumentMode === 'drums') {
+    if (preferChannel10Only) {
+      const channel10 = nonEmpty.find((track) => track.channel === 9)
+      if (channel10) {
+        return [channel10.index]
+      }
+    }
+
+    const drumNamed = nonEmpty.find((track) => /drum|kit|perc|rhythm/i.test(track.name))
+    if (drumNamed) {
+      return [drumNamed.index]
+    }
+  } else {
+    const preferred =
+      instrumentMode === 'bass'
+        ? nonEmpty.find((track) => /bass/i.test(track.name))
+        : nonEmpty.find((track) => /guitar|lead|rhythm/i.test(track.name))
+    if (preferred) {
+      return [preferred.index]
+    }
+
+    const nonDrum = nonEmpty.find((track) => track.channel !== 9)
+    if (nonDrum) {
+      return [nonDrum.index]
+    }
+  }
+
+  return [nonEmpty[0].index]
+}
+
 function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isBusy, setIsBusy] = useState(false)
@@ -77,6 +120,8 @@ function App() {
   const [result, setResult] = useState<ConversionResult | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [inputKind, setInputKind] = useState<InputKind>('unknown')
+  const [midiInfo, setMidiInfo] = useState<MidiInspectionResult | null>(null)
+  const [selectedMidiTrackIndices, setSelectedMidiTrackIndices] = useState<number[]>([])
   const [gpInfo, setGpInfo] = useState<GpInspectionResult | null>(null)
   const [selectedGpTrackId, setSelectedGpTrackId] = useState<string>('')
   const [manualMidiRemapText, setManualMidiRemapText] = useState('')
@@ -183,6 +228,8 @@ function App() {
     }
     return [...result.meta.mappedPreviewNotes].sort((a, b) => a.tick - b.tick)
   }, [result])
+
+  const timelineIsDrums = result?.meta.instrumentMode === 'drums'
 
   const miniTimeline = useMemo(() => {
     if (!result) {
@@ -412,6 +459,8 @@ function App() {
 
     raf = window.requestAnimationFrame(frame)
     return () => window.cancelAnimationFrame(raf)
+  // triggerDrumSound is intentionally stable for this playback loop and does not depend on render state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTimelinePlaying, result, timelineTempoBpm, timelineMaxTick, playbackRate, currentTick, playbackNotes])
 
   useEffect(() => {
@@ -470,8 +519,23 @@ function App() {
     setSelectedFile(file)
     setResult(null)
     setErrorMessage(null)
+    setMidiInfo(null)
+    setSelectedMidiTrackIndices([])
     setGpInfo(null)
     setSelectedGpTrackId('')
+
+    if (midi) {
+      try {
+        const parsed = await inspectMidiFile(file)
+        setMidiInfo(parsed)
+        setSelectedMidiTrackIndices(
+          suggestMidiTrackIndices(parsed, options.instrumentMode, options.preferChannel10Only),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not parse MIDI file.'
+        setErrorMessage(message)
+      }
+    }
 
     if (gp) {
       try {
@@ -501,6 +565,7 @@ function App() {
     const effectiveOptions: ConvertOptions = {
       ...options,
       manualMidiRemap: remapParse.map,
+      midiTrackIndices: inputKind === 'midi' ? selectedMidiTrackIndices : undefined,
     }
 
     setIsBusy(true)
@@ -549,18 +614,23 @@ function App() {
   return (
     <main className="page-shell">
       <section className="hero-card">
-        <div>
-          <p className="kicker">MIDI to Clone Hero Converter</p>
-          <h1>Convert MIDI/GP into drums, guitar, or bass Clone Hero charts</h1>
+        <div className="hero-headline">
+          <span className="hero-brand-chip">
+            <img src={siteIcon} alt="MIDI to CH Chart logo" className="hero-brand-icon" />
+            MIDI to CH Chart
+          </span>
+          <p className="kicker">Clone Hero Chart Converter</p>
+          <h1>Build stage-ready Clone Hero charts with Guitar Hero energy</h1>
           <p className="lead">
-            Choose an instrument mode and export a <strong>.chart</strong> with lane placement
-            derived from drum mapping or guitar/bass fretboard position.
+            Pull in MIDI or Guitar Pro tracks, tune your mapping, then export a
+            <strong> .chart </strong>
+            with fretboard-aware lanes and synced timing.
           </p>
         </div>
         <div className="pill-row">
-          <span className="pill">Drums + guitar + bass</span>
-          <span className="pill">Fretboard-aware string mapping</span>
-          <span className="pill">Tempo + time signature sync</span>
+          <span className="pill">Drums + guitar + bass modes</span>
+          <span className="pill">Pick one or multiple MIDI tracks</span>
+          <span className="pill">Tempo + signature lock</span>
         </div>
       </section>
 
@@ -595,6 +665,43 @@ function App() {
             Selected:{' '}
             <strong>{selectedFile ? selectedFile.name : 'No file selected'}</strong>
           </p>
+
+          {inputKind === 'midi' && midiInfo ? (
+            <div className="gp-track-box">
+              <p className="meta-row">
+                MIDI track selection: choose one or more tracks to convert.
+              </p>
+              <div className="midi-track-list">
+                {midiInfo.tracks
+                  .filter((track) => track.noteCount > 0)
+                  .map((track) => {
+                    const checked = selectedMidiTrackIndices.includes(track.index)
+                    return (
+                      <label key={`midi-track-${track.index}`} className="midi-track-item">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            const next = new Set(selectedMidiTrackIndices)
+                            if (event.target.checked) {
+                              next.add(track.index)
+                            } else {
+                              next.delete(track.index)
+                            }
+                            setSelectedMidiTrackIndices([...next].sort((a, b) => a - b))
+                          }}
+                        />
+                        <span>
+                          <strong>{track.name}</strong> | channel{' '}
+                          {track.channel == null ? 'n/a' : track.channel + 1} | notes {track.noteCount}
+                        </span>
+                      </label>
+                    )
+                  })}
+              </div>
+              <span className="hint-row">If none are selected, conversion falls back to auto-pick.</span>
+            </div>
+          ) : null}
 
           {inputKind === 'gp' && gpInfo ? (
             <div className="gp-track-box">
@@ -981,7 +1088,7 @@ function App() {
               height={miniTimeline.height}
               style={{ width: `${miniTimeline.width}px`, height: `${miniTimeline.height}px` }}
               role="img"
-              aria-label="Mapped drum timeline"
+              aria-label={timelineIsDrums ? 'Mapped drum timeline' : 'Mapped stringed timeline'}
               onClick={(event) => {
                 const container = timelineScrollRef.current
                 if (!container) {
@@ -997,21 +1104,23 @@ function App() {
               {[24, 49, 74, 99, 124].map((y) => (
                 <line key={`lane-${y}`} x1="10" y1={y} x2={miniTimeline.width - 10} y2={y} className="timeline-lane" />
               ))}
-              {miniTimeline.points
-                .filter((point) => point.lane === 0)
-                .map((point, index) => (
-                  <line
-                    key={`kick-bar-${index}`}
-                    x1={point.x}
-                    y1="10"
-                    x2={point.x}
-                    y2="138"
-                    className="timeline-kick-bar"
-                  />
-                ))}
+              {timelineIsDrums
+                ? miniTimeline.points
+                    .filter((point) => point.lane === 0)
+                    .map((point, index) => (
+                      <line
+                        key={`kick-bar-${index}`}
+                        x1={point.x}
+                        y1="10"
+                        x2={point.x}
+                        y2="138"
+                        className="timeline-kick-bar"
+                      />
+                    ))
+                : null}
               <line x1={currentTickX} y1="10" x2={currentTickX} y2="138" className="timeline-playhead" />
               {miniTimeline.points.map((point, index) =>
-                point.lane === 0 ? null : (
+                timelineIsDrums && point.lane === 0 ? null : (
                   <rect
                     key={`point-${index}`}
                     x={point.x - 4}
@@ -1020,7 +1129,9 @@ function App() {
                     height="8"
                     rx="2"
                     className={
-                      point.lane === 1
+                      point.lane === 0
+                        ? 'timeline-note lane-kick'
+                        : point.lane === 1
                         ? 'timeline-note lane-red'
                         : point.lane === 2
                           ? point.openHiHat
@@ -1036,7 +1147,9 @@ function App() {
             </svg>
           </div>
           <p className="timeline-legend">
-            Top to bottom lanes: Green, Blue, Yellow, Red, Kick. Click anywhere in the mini chart to jump position.
+            {timelineIsDrums
+              ? 'Top to bottom lanes: Green, Blue, Yellow, Red, Kick. Vertical bars are kick hits.'
+              : 'Top to bottom lanes: Green, Blue, Yellow, Red, Low lane. Click anywhere in the mini chart to jump position.'}
           </p>
         </section>
       ) : null}
@@ -1051,8 +1164,8 @@ function App() {
         ) : (
           <p>
             Guitar/bass notes are assigned to probable strings and frets, then mapped to
-            5 lanes by absolute fret position. Lower-register songs bias to lower lanes,
-            and higher-register songs bias to higher lanes.
+            5 lanes by relative fret position. Lower-register phrases bias to lower lanes,
+            and higher-register phrases bias to higher lanes.
           </p>
         )}
       </section>
