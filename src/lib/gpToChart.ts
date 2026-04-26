@@ -57,18 +57,18 @@ interface GpMasterBar {
 
 interface GpBar {
   id: string
-  voices: string
+  voices: string[]
 }
 
 interface GpVoice {
   id: string
-  beats: string
+  beats: string[]
 }
 
 interface GpBeat {
   id: string
-  rhythmRef: string
-  notes: string
+  rhythmRef: string | null
+  notes: string[]
 }
 
 interface GpNote {
@@ -110,7 +110,7 @@ const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   },
 ]
 
-const OPEN_HIHAT_ACCENT_MARKER = 34
+const YELLOW_ACCENT_MARKER = 35
 
 const XML_PARSER = new XMLParser({
   ignoreAttributes: false,
@@ -236,6 +236,16 @@ function numberOf(value: unknown, fallback = 0): number {
       return parsed
     }
   }
+  if (value && typeof value === 'object') {
+    const record = value as AnyRecord
+    const textValue = record['#text'] ?? record['#cdata'] ?? record['@_value']
+    if (typeof textValue === 'string' || typeof textValue === 'number') {
+      const parsed = Number(textValue)
+      if (Number.isFinite(parsed)) {
+        return parsed
+      }
+    }
+  }
   return fallback
 }
 
@@ -249,7 +259,46 @@ function splitRefIds(value: string | undefined): string[] {
     .filter((item) => item.length > 0 && item !== '-1')
 }
 
+function collectRefIds(value: unknown): string[] {
+  if (value == null) {
+    return []
+  }
+
+  if (typeof value === 'string') {
+    return splitRefIds(value)
+  }
+
+  if (typeof value === 'number') {
+    return splitRefIds(String(value))
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectRefIds(item))
+  }
+
+  if (typeof value === 'object') {
+    const obj = value as AnyRecord
+    const directRef = obj['@_ref']
+    if (typeof directRef === 'string' || typeof directRef === 'number') {
+      return splitRefIds(String(directRef))
+    }
+
+    const nestedIds: string[] = []
+    for (const nestedValue of Object.values(obj)) {
+      nestedIds.push(...collectRefIds(nestedValue))
+    }
+    return nestedIds
+  }
+
+  return []
+}
+
 function readNoteMidi(noteObj: AnyRecord): number | null {
+  const directMidi = numberOf(noteObj.Midi, -1)
+  if (directMidi >= 0 && directMidi <= 127) {
+    return directMidi
+  }
+
   const properties = (noteObj.Properties as AnyRecord | undefined)?.Property
   const list = asArray(properties as AnyRecord | AnyRecord[])
   let fallbackFret: number | null = null
@@ -258,7 +307,7 @@ function readNoteMidi(noteObj: AnyRecord): number | null {
   for (const prop of list) {
     const propName = String(prop['@_name'] ?? '')
     if (propName === 'Midi') {
-      const midi = numberOf(prop.Number, -1)
+      const midi = numberOf((prop as AnyRecord).Number ?? (prop as AnyRecord).Midi, -1)
       return midi >= 0 && midi <= 127 ? midi : null
     }
 
@@ -488,8 +537,8 @@ function buildDrumSection(
 
   for (const note of notes) {
     lines.push(`  ${note.tick} = N ${note.lane} ${note.length}`)
-    if (accentOpenHiHatOnYellowCymbal && note.openHiHat && note.lane === 2) {
-      lines.push(`  ${note.tick} = N ${OPEN_HIHAT_ACCENT_MARKER} ${note.length}`)
+    if (accentOpenHiHatOnYellowCymbal && note.cymbal && note.lane === 2) {
+      lines.push(`  ${note.tick} = N ${YELLOW_ACCENT_MARKER} ${note.length}`)
     }
     if (emitCymbalMarkers && note.cymbal && note.lane >= 2) {
       const cymbalLane = note.lane as 2 | 3 | 4
@@ -558,7 +607,7 @@ async function loadGpData(file: File): Promise<GpParsedData> {
     const id = String(bar['@_id'] ?? '')
     barsById.set(id, {
       id,
-      voices: String(bar.Voices ?? ''),
+      voices: collectRefIds(bar.Voices),
     })
   }
 
@@ -568,7 +617,7 @@ async function loadGpData(file: File): Promise<GpParsedData> {
     const id = String(voice['@_id'] ?? '')
     voicesById.set(id, {
       id,
-      beats: String(voice.Beats ?? ''),
+      beats: collectRefIds(voice.Beats),
     })
   }
 
@@ -576,11 +625,11 @@ async function loadGpData(file: File): Promise<GpParsedData> {
   const beatsById = new Map<string, GpBeat>()
   for (const beat of beatsRaw) {
     const id = String(beat['@_id'] ?? '')
-    const rhythmRef = String((beat.Rhythm as AnyRecord | undefined)?.['@_ref'] ?? '')
+    const rhythmRefs = collectRefIds(beat.Rhythm)
     beatsById.set(id, {
       id,
-      rhythmRef,
-      notes: typeof beat.Notes === 'string' ? beat.Notes : '',
+      rhythmRef: rhythmRefs[0] ?? null,
+      notes: collectRefIds(beat.Notes),
     })
   }
 
@@ -698,7 +747,7 @@ function collectTrackMappedNotes(
       continue
     }
 
-    const voiceIds = splitRefIds(bar.voices)
+    const voiceIds = bar.voices
 
     for (const voiceId of voiceIds) {
       const voice = data.voicesById.get(voiceId)
@@ -707,7 +756,7 @@ function collectTrackMappedNotes(
       }
 
       let voiceTick = absoluteBarTick
-      const beatIds = splitRefIds(voice.beats)
+      const beatIds = voice.beats
 
       for (const beatId of beatIds) {
         const beat = data.beatsById.get(beatId)
@@ -715,10 +764,10 @@ function collectTrackMappedNotes(
           continue
         }
 
-        const rhythm = data.rhythmsById.get(beat.rhythmRef)
+        const rhythm = beat.rhythmRef ? data.rhythmsById.get(beat.rhythmRef) : undefined
         const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
 
-        const noteIds = splitRefIds(beat.notes)
+        const noteIds = beat.notes
         for (const noteId of noteIds) {
           const note = data.notesById.get(noteId)
           if (!note || note.midi == null) {
@@ -823,7 +872,7 @@ function collectTrackStringedMappedNotes(
       continue
     }
 
-    const voiceIds = splitRefIds(bar.voices)
+    const voiceIds = bar.voices
 
     for (const voiceId of voiceIds) {
       const voice = data.voicesById.get(voiceId)
@@ -832,7 +881,7 @@ function collectTrackStringedMappedNotes(
       }
 
       let voiceTick = absoluteBarTick
-      const beatIds = splitRefIds(voice.beats)
+      const beatIds = voice.beats
 
       for (const beatId of beatIds) {
         const beat = data.beatsById.get(beatId)
@@ -840,9 +889,9 @@ function collectTrackStringedMappedNotes(
           continue
         }
 
-        const rhythm = data.rhythmsById.get(beat.rhythmRef)
+        const rhythm = beat.rhythmRef ? data.rhythmsById.get(beat.rhythmRef) : undefined
         const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
-        const noteIds = splitRefIds(beat.notes)
+        const noteIds = beat.notes
 
         for (const noteId of noteIds) {
           const note = data.notesById.get(noteId)

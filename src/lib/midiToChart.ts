@@ -131,7 +131,7 @@ const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   },
 ]
 
-const OPEN_HIHAT_ACCENT_MARKER = 34
+const YELLOW_ACCENT_MARKER = 35
 
 const DEFAULT_OPTIONS: ConvertOptions = {
   instrumentMode: 'drums',
@@ -445,8 +445,8 @@ function buildDrumSection(
 
   for (const note of mappedNotes) {
     lines.push(`  ${note.tick} = N ${note.lane} ${note.length}`)
-    if (accentOpenHiHatOnYellowCymbal && note.openHiHat && note.lane === 2) {
-      lines.push(`  ${note.tick} = N ${OPEN_HIHAT_ACCENT_MARKER} ${note.length}`)
+    if (accentOpenHiHatOnYellowCymbal && note.cymbal && note.lane === 2) {
+      lines.push(`  ${note.tick} = N ${YELLOW_ACCENT_MARKER} ${note.length}`)
     }
     if (emitCymbalMarkers && note.cymbal && note.lane >= 2) {
       const cymbalLane = note.lane as 2 | 3 | 4
