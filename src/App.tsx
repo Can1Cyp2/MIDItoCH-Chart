@@ -129,6 +129,7 @@ function App() {
     instrumentMode: 'drums',
     preferChannel10Only: true,
     emitCymbalMarkers: true,
+    accentOpenHiHatOnYellowCymbal: true,
     forceZeroLengthNotes: true,
     preserveStackedHits: true,
     difficulty: 'ExpertDrums',
@@ -423,6 +424,11 @@ function App() {
     }
 
     const ticksPerSecond = (result.meta.ppq * timelineTempoBpm) / 60
+    if (!Number.isFinite(ticksPerSecond) || ticksPerSecond <= 0) {
+      setIsTimelinePlaying(false)
+      return
+    }
+
     let raf = 0
     let last = performance.now()
     const startIndex = playbackNotes.findIndex((note) => note.tick >= currentTick)
@@ -430,11 +436,17 @@ function App() {
     lastAudioTickRef.current = currentTick
 
     const frame = (now: number) => {
-      const deltaSeconds = (now - last) / 1000
+      const elapsedMs = Math.max(0, now - last)
+      // Cap frame delta so tab throttling/resume cannot cause large jumps.
+      const deltaSeconds = Math.min(0.1, elapsedMs / 1000)
       last = now
 
       setCurrentTick((prev) => {
-        const next = prev + deltaSeconds * ticksPerSecond * playbackRate
+        const clampedPrev = Math.min(timelineMaxTick, Math.max(0, prev))
+        const next = Math.min(
+          timelineMaxTick,
+          Math.max(clampedPrev, clampedPrev + deltaSeconds * ticksPerSecond * playbackRate),
+        )
 
         let cursor = playbackCursorRef.current
         while (cursor < playbackNotes.length && playbackNotes[cursor].tick <= next) {
@@ -461,7 +473,7 @@ function App() {
     return () => window.cancelAnimationFrame(raf)
   // triggerDrumSound is intentionally stable for this playback loop and does not depend on render state.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTimelinePlaying, result, timelineTempoBpm, timelineMaxTick, playbackRate, currentTick, playbackNotes])
+  }, [isTimelinePlaying, result, timelineTempoBpm, timelineMaxTick, playbackRate, playbackNotes])
 
   useEffect(() => {
     const container = timelineScrollRef.current
@@ -709,7 +721,7 @@ function App() {
                 GP Song: <strong>{gpInfo.title}</strong> by <strong>{gpInfo.artist}</strong>
               </p>
               <p className="gp-warning-note" role="status">
-                Notes are often missing when mapping from GP files. We are actively fixing this glitch.
+                Notes can sometimes be missing from GP files. We are actively fixing this glitch.
                 MIDI files usually convert more reliably right now.
               </p>
               <label className="select-row">
@@ -821,6 +833,21 @@ function App() {
                 Emit pro-drums cymbal marker notes
               </label>
             ) : null}
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.accentOpenHiHatOnYellowCymbal}
+                disabled={!isDrumMode}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    accentOpenHiHatOnYellowCymbal: event.target.checked,
+                  }))
+                }
+              />
+              Accent yellow cymbal when open hi-hat is detected {isDrumMode ? '' : '(drums only)'}
+            </label>
 
             <label className="toggle-row">
               <input
@@ -1119,31 +1146,48 @@ function App() {
                     ))
                 : null}
               <line x1={currentTickX} y1="10" x2={currentTickX} y2="138" className="timeline-playhead" />
-              {miniTimeline.points.map((point, index) =>
-                timelineIsDrums && point.lane === 0 ? null : (
+              {miniTimeline.points.map((point, index) => {
+                if (timelineIsDrums && point.lane === 0) {
+                  return null
+                }
+
+                const laneClassName =
+                  point.lane === 0
+                    ? 'timeline-note lane-kick'
+                    : point.lane === 1
+                    ? 'timeline-note lane-red'
+                    : point.lane === 2
+                      ? point.openHiHat
+                        ? 'timeline-note lane-yellow open-hihat'
+                        : 'timeline-note lane-yellow'
+                      : point.lane === 3
+                        ? 'timeline-note lane-blue'
+                        : 'timeline-note lane-green'
+
+                if (timelineIsDrums && point.cymbal) {
+                  return (
+                    <circle
+                      key={`point-${index}`}
+                      cx={point.x}
+                      cy={point.y}
+                      r="4.5"
+                      className={`${laneClassName} timeline-note-cymbal`}
+                    />
+                  )
+                }
+
+                return (
                   <rect
                     key={`point-${index}`}
                     x={point.x - 4}
                     y={point.y - 4}
                     width="8"
                     height="8"
-                    rx="2"
-                    className={
-                      point.lane === 0
-                        ? 'timeline-note lane-kick'
-                        : point.lane === 1
-                        ? 'timeline-note lane-red'
-                        : point.lane === 2
-                          ? point.openHiHat
-                            ? 'timeline-note lane-yellow open-hihat'
-                            : 'timeline-note lane-yellow'
-                          : point.lane === 3
-                            ? 'timeline-note lane-blue'
-                            : 'timeline-note lane-green'
-                    }
+                    rx={timelineIsDrums ? 0 : 2}
+                    className={`${laneClassName} ${timelineIsDrums ? 'timeline-note-drum' : ''}`}
                   />
-                ),
-              )}
+                )
+              })}
             </svg>
           </div>
           <p className="timeline-legend">
@@ -1151,6 +1195,11 @@ function App() {
               ? 'Top to bottom lanes: Green, Blue, Yellow, Red, Kick. Vertical bars are kick hits.'
               : 'Top to bottom lanes: Green, Blue, Yellow, Red, Low lane. Click anywhere in the mini chart to jump position.'}
           </p>
+          {timelineIsDrums ? (
+            <p className="timeline-legend timeline-legend-detail">
+              Cymbals are circles, drums are squares, and open hi-hat notes have a glowing outline.
+            </p>
+          ) : null}
         </section>
       ) : null}
 

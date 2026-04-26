@@ -110,6 +110,8 @@ const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   },
 ]
 
+const OPEN_HIHAT_ACCENT_MARKER = 34
+
 const XML_PARSER = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -403,6 +405,7 @@ function dedupeAndSort(notes: GpMappedNote[], preserveStackedHits: boolean): GpM
     }
     existing.length = Math.max(existing.length, note.length)
     existing.cymbal = existing.cymbal || note.cymbal
+    existing.openHiHat = existing.openHiHat || note.openHiHat
   }
 
   return [...map.values()]
@@ -479,11 +482,15 @@ function buildDrumSection(
   notes: GpMappedNote[],
   difficulty: DrumDifficulty,
   emitCymbalMarkers: boolean,
+  accentOpenHiHatOnYellowCymbal: boolean,
 ): string {
   const lines: string[] = []
 
   for (const note of notes) {
     lines.push(`  ${note.tick} = N ${note.lane} ${note.length}`)
+    if (accentOpenHiHatOnYellowCymbal && note.openHiHat && note.lane === 2) {
+      lines.push(`  ${note.tick} = N ${OPEN_HIHAT_ACCENT_MARKER} ${note.length}`)
+    }
     if (emitCymbalMarkers && note.cymbal && note.lane >= 2) {
       const cymbalLane = note.lane as 2 | 3 | 4
       for (const family of CYMBAL_MARKER_FAMILIES) {
@@ -749,6 +756,7 @@ function collectTrackMappedNotes(
           if (mappedLane.lane === 4) stats.green += 1
           stats.laneCounts[mappedLane.lane] += 1
           if (mappedLane.cymbal && mappedLane.lane >= 2) stats.cymbalFlags += 1
+          if (mappedLane.openHiHat) stats.openNotes += 1
           if (mappedLane.lane === 0) {
             kickSourceHistogram.set(remappedMidi, (kickSourceHistogram.get(remappedMidi) ?? 0) + 1)
           }
@@ -888,12 +896,15 @@ function collectTrackStringedMappedNotes(
   }
 }
 
-function buildPreviewNotes(notes: GpMappedNote[]): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }> {
+function buildPreviewNotes(
+  notes: GpMappedNote[],
+  accentOpenHiHatOnYellowCymbal: boolean,
+): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }> {
   return notes.map((note) => ({
     tick: note.tick,
     lane: note.lane,
     cymbal: note.cymbal,
-    openHiHat: note.openHiHat,
+    openHiHat: accentOpenHiHatOnYellowCymbal ? note.openHiHat : false,
   }))
 }
 
@@ -971,7 +982,12 @@ export async function convertGpToCloneHeroChart(
     '',
     isStringed
       ? buildFiveFretSection(notes, options.instrumentMode as StringedInstrument)
-      : buildDrumSection(notes, options.difficulty as DrumDifficulty, options.emitCymbalMarkers),
+      : buildDrumSection(
+          notes,
+          options.difficulty as DrumDifficulty,
+          options.emitCymbalMarkers,
+          options.accentOpenHiHatOnYellowCymbal,
+        ),
     '',
   ].join('\n')
 
@@ -1000,7 +1016,7 @@ export async function convertGpToCloneHeroChart(
       kickSourceHistogram,
       instrumentMode: options.instrumentMode,
       fretboardSummary,
-      mappedPreviewNotes: buildPreviewNotes(notes),
+      mappedPreviewNotes: buildPreviewNotes(notes, options.accentOpenHiHatOnYellowCymbal),
       maxTick: notes.at(-1)?.tick ?? 0,
     },
   }
