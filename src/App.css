@@ -469,6 +469,16 @@ textarea {
   opacity: 0.94;
 }
 
+.timeline-note-cymbal {
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 0.8;
+}
+
+.timeline-note-drum {
+  stroke: rgba(0, 0, 0, 0.28);
+  stroke-width: 0.7;
+}
+
 .timeline-note.lane-kick {
   fill: #ff9f1c;
 }
@@ -484,8 +494,8 @@ textarea {
 .timeline-note.lane-yellow.open-hihat {
   fill: #ffe67f;
   stroke: #fff8d1;
-  stroke-width: 1.1;
-  filter: drop-shadow(0 0 4px rgba(255, 230, 127, 0.7));
+  stroke-width: 1.2;
+  filter: drop-shadow(0 0 6px rgba(255, 230, 127, 0.85));
 }
 
 .timeline-note.lane-blue {
@@ -512,6 +522,11 @@ textarea {
   margin-top: 0.35rem;
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.timeline-legend-detail {
+  margin-top: 0.1rem;
+  color: var(--text-soft);
 }
 
 @media (max-width: 900px) {
