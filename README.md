@@ -94,6 +94,7 @@ If your source files use a different map, use manual remap first, then extend ma
 
 - `Prefer channel 10 tracks only`: prioritizes standard MIDI drum channel behavior.
 - `Emit pro-drums cymbal marker notes`: adds cymbal flag notes for pro-drums compatibility.
+- `Accent yellow cymbal when open hi-hat is detected`: adds accent markers for open hi-hat hits on the yellow cymbal lane.
 - `Force zero-length drum gems`: emits drum hits with zero sustain (common charting preference).
 - `Preserve stacked hits`: nudges same-lane/same-tick collisions by 1 tick so hits are retained.
 - `Difficulty section`: choose output section (`EasyDrums`, `MediumDrums`, `HardDrums`, `ExpertDrums`).
