@@ -15,6 +15,7 @@ export interface ConvertOptions {
   instrumentMode: InstrumentMode
   preferChannel10Only: boolean
   emitCymbalMarkers: boolean
+  accentOpenHiHatOnYellowCymbal: boolean
   forceZeroLengthNotes: boolean
   preserveStackedHits: boolean
   difficulty: DrumDifficulty
@@ -130,10 +131,13 @@ const CYMBAL_MARKER_FAMILIES: Array<Record<2 | 3 | 4, number>> = [
   },
 ]
 
+const OPEN_HIHAT_ACCENT_MARKER = 34
+
 const DEFAULT_OPTIONS: ConvertOptions = {
   instrumentMode: 'drums',
   preferChannel10Only: true,
   emitCymbalMarkers: true,
+  accentOpenHiHatOnYellowCymbal: true,
   forceZeroLengthNotes: true,
   preserveStackedHits: true,
   difficulty: 'ExpertDrums',
@@ -435,11 +439,15 @@ function buildDrumSection(
   mappedNotes: MappedNote[],
   difficulty: DrumDifficulty,
   emitCymbalMarkers: boolean,
+  accentOpenHiHatOnYellowCymbal: boolean,
 ): string {
   const lines: string[] = []
 
   for (const note of mappedNotes) {
     lines.push(`  ${note.tick} = N ${note.lane} ${note.length}`)
+    if (accentOpenHiHatOnYellowCymbal && note.openHiHat && note.lane === 2) {
+      lines.push(`  ${note.tick} = N ${OPEN_HIHAT_ACCENT_MARKER} ${note.length}`)
+    }
     if (emitCymbalMarkers && note.cymbal && note.lane >= 2) {
       const cymbalLane = note.lane as 2 | 3 | 4
       for (const family of CYMBAL_MARKER_FAMILIES) {
@@ -490,6 +498,7 @@ function dedupeAndSort(notes: MappedNote[], preserveStackedHits: boolean): Mappe
     }
     existing.length = Math.max(existing.length, note.length)
     existing.cymbal = existing.cymbal || note.cymbal
+    existing.openHiHat = existing.openHiHat || note.openHiHat
   }
 
   return [...merged.values()]
@@ -506,12 +515,15 @@ function buildOutputFileName(sourceFileName: string, instrumentMode: InstrumentM
   return `${base}_prodrums.chart`
 }
 
-function buildPreviewNotes(notes: MappedNote[]): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }> {
+function buildPreviewNotes(
+  notes: MappedNote[],
+  accentOpenHiHatOnYellowCymbal: boolean,
+): Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }> {
   return notes.map((note) => ({
     tick: note.tick,
     lane: note.lane,
     cymbal: note.cymbal,
-    openHiHat: note.openHiHat,
+    openHiHat: accentOpenHiHatOnYellowCymbal ? note.openHiHat : false,
   }))
 }
 
@@ -569,6 +581,7 @@ function collectMappedNotes(
       if (mapping.lane === 4) stats.green += 1
       stats.laneCounts[mapping.lane] += 1
       if (mapping.cymbal && mapping.lane >= 2) stats.cymbalFlags += 1
+      if (mapping.openHiHat) stats.openNotes += 1
       if (mapping.lane === 0) {
         kickSourceHistogram.set(normalizedMidi, (kickSourceHistogram.get(normalizedMidi) ?? 0) + 1)
       }
@@ -658,7 +671,12 @@ export async function convertMidiToCloneHeroChart(
     '',
     isStringed
       ? buildFiveFretSection(notes, options.instrumentMode as 'guitar' | 'bass')
-      : buildDrumSection(notes, options.difficulty, options.emitCymbalMarkers),
+      : buildDrumSection(
+          notes,
+          options.difficulty,
+          options.emitCymbalMarkers,
+          options.accentOpenHiHatOnYellowCymbal,
+        ),
     '',
   ].join('\n')
 
@@ -676,7 +694,7 @@ export async function convertMidiToCloneHeroChart(
       kickSourceHistogram,
       instrumentMode: options.instrumentMode,
       fretboardSummary,
-      mappedPreviewNotes: buildPreviewNotes(notes),
+      mappedPreviewNotes: buildPreviewNotes(notes, options.accentOpenHiHatOnYellowCymbal),
       maxTick: notes.at(-1)?.tick ?? 0,
     },
   }
