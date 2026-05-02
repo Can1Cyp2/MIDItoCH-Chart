@@ -632,7 +632,7 @@ function App() {
             MIDI to CH Chart
           </span>
           <p className="kicker">Clone Hero Chart Converter</p>
-          <h1>Build stage-ready Clone Hero charts with Guitar Hero energy</h1>
+          <h1>Build stage-ready Clone Hero charts with GuitarPro or Midi Files</h1>
           <p className="lead">
             Pull in MIDI or Guitar Pro tracks, tune your mapping, then export a
             <strong> .chart </strong>
@@ -846,7 +846,7 @@ function App() {
                   }))
                 }
               />
-              Accent yellow cymbal when open hi-hat is detected {isDrumMode ? '' : '(drums only)'}
+              Accent yellow cymbal (hi-hat/open hi-hat) {isDrumMode ? '' : '(drums only)'}
             </label>
 
             <label className="toggle-row">
