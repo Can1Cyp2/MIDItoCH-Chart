@@ -708,7 +708,7 @@ async function loadGpData(file: File): Promise<GpParsedData> {
 
 function collectTrackMappedNotes(
   data: GpParsedData,
-  trackIndex: number,
+  trackIndices: number[],
   options: ConvertOptions,
 ): {
   notes: GpMappedNote[]
@@ -718,104 +718,106 @@ function collectTrackMappedNotes(
   kickSourceHistogram: Array<{ midi: number; count: number }>
 } {
   const stats: LaneStats = emptyLaneStats()
+  const selectedTrackIndices = [...new Set(trackIndices)]
 
   const sourceHistogram = new Map<number, number>()
   const unmappedHistogram = new Map<number, number>()
   const kickSourceHistogram = new Map<number, number>()
   const mapped: GpMappedNote[] = []
   const ppq = data.ppq
-  const midiNormalizationMap = data.tracks[trackIndex]?.inputToOutputMidi ?? {}
   const manualMidiRemap = options.manualMidiRemap ?? {}
+  for (const trackIndex of selectedTrackIndices) {
+    const midiNormalizationMap = data.tracks[trackIndex]?.inputToOutputMidi ?? {}
+    let absoluteBarTick = 0
 
-  let absoluteBarTick = 0
+    for (let masterBarIndex = 0; masterBarIndex < data.masterBars.length; masterBarIndex += 1) {
+      const masterBar = data.masterBars[masterBarIndex]
+      const { numerator, denominator } = parseTimeSignature(masterBar.time)
+      const barTicks = (ppq * 4 * numerator) / denominator
 
-  for (let masterBarIndex = 0; masterBarIndex < data.masterBars.length; masterBarIndex += 1) {
-    const masterBar = data.masterBars[masterBarIndex]
-    const { numerator, denominator } = parseTimeSignature(masterBar.time)
-    const barTicks = (ppq * 4 * numerator) / denominator
-
-    const perTrackBarIds = splitRefIds(masterBar.bars)
-    const barId = perTrackBarIds[trackIndex]
-    if (!barId) {
-      absoluteBarTick += barTicks
-      continue
-    }
-
-    const bar = data.barsById.get(barId)
-    if (!bar) {
-      absoluteBarTick += barTicks
-      continue
-    }
-
-    const voiceIds = bar.voices
-
-    for (const voiceId of voiceIds) {
-      const voice = data.voicesById.get(voiceId)
-      if (!voice) {
+      const perTrackBarIds = splitRefIds(masterBar.bars)
+      const barId = perTrackBarIds[trackIndex]
+      if (!barId) {
+        absoluteBarTick += barTicks
         continue
       }
 
-      let voiceTick = absoluteBarTick
-      const beatIds = voice.beats
+      const bar = data.barsById.get(barId)
+      if (!bar) {
+        absoluteBarTick += barTicks
+        continue
+      }
 
-      for (const beatId of beatIds) {
-        const beat = data.beatsById.get(beatId)
-        if (!beat) {
+      const voiceIds = bar.voices
+
+      for (const voiceId of voiceIds) {
+        const voice = data.voicesById.get(voiceId)
+        if (!voice) {
           continue
         }
 
-        const rhythm = beat.rhythmRef ? data.rhythmsById.get(beat.rhythmRef) : undefined
-        const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
+        let voiceTick = absoluteBarTick
+        const beatIds = voice.beats
 
-        const noteIds = beat.notes
-        for (const noteId of noteIds) {
-          const note = data.notesById.get(noteId)
-          if (!note || note.midi == null) {
+        for (const beatId of beatIds) {
+          const beat = data.beatsById.get(beatId)
+          if (!beat) {
             continue
           }
 
-          const normalizedMidi = midiNormalizationMap[note.midi] ?? note.midi
-          const remappedMidi = manualMidiRemap[normalizedMidi] ?? normalizedMidi
+          const rhythm = beat.rhythmRef ? data.rhythmsById.get(beat.rhythmRef) : undefined
+          const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
 
-          sourceHistogram.set(normalizedMidi, (sourceHistogram.get(normalizedMidi) ?? 0) + 1)
+          const noteIds = beat.notes
+          for (const noteId of noteIds) {
+            const note = data.notesById.get(noteId)
+            if (!note || note.midi == null) {
+              continue
+            }
 
-          const mappedLane = mapMidiNoteToLane(remappedMidi)
-          if (!mappedLane) {
-            stats.unmapped += 1
-            unmappedHistogram.set(
-              remappedMidi,
-              (unmappedHistogram.get(remappedMidi) ?? 0) + 1,
-            )
-            continue
+            const normalizedMidi = midiNormalizationMap[note.midi] ?? note.midi
+            const remappedMidi = manualMidiRemap[normalizedMidi] ?? normalizedMidi
+
+            sourceHistogram.set(normalizedMidi, (sourceHistogram.get(normalizedMidi) ?? 0) + 1)
+
+            const mappedLane = mapMidiNoteToLane(remappedMidi)
+            if (!mappedLane) {
+              stats.unmapped += 1
+              unmappedHistogram.set(
+                remappedMidi,
+                (unmappedHistogram.get(remappedMidi) ?? 0) + 1,
+              )
+              continue
+            }
+
+            const noteLength = options.forceZeroLengthNotes ? 0 : Math.max(0, Math.round(beatLength))
+            mapped.push({
+              tick: Math.max(0, Math.round(voiceTick)),
+              lane: mappedLane.lane,
+              length: noteLength,
+              cymbal: mappedLane.cymbal,
+              openHiHat: mappedLane.openHiHat,
+            })
+
+            if (mappedLane.lane === 0) stats.kick += 1
+            if (mappedLane.lane === 1) stats.red += 1
+            if (mappedLane.lane === 2) stats.yellow += 1
+            if (mappedLane.lane === 3) stats.blue += 1
+            if (mappedLane.lane === 4) stats.green += 1
+            stats.laneCounts[mappedLane.lane] += 1
+            if (mappedLane.cymbal && mappedLane.lane >= 2) stats.cymbalFlags += 1
+            if (mappedLane.openHiHat) stats.openNotes += 1
+            if (mappedLane.lane === 0) {
+              kickSourceHistogram.set(remappedMidi, (kickSourceHistogram.get(remappedMidi) ?? 0) + 1)
+            }
           }
 
-          const noteLength = options.forceZeroLengthNotes ? 0 : Math.max(0, Math.round(beatLength))
-          mapped.push({
-            tick: Math.max(0, Math.round(voiceTick)),
-            lane: mappedLane.lane,
-            length: noteLength,
-            cymbal: mappedLane.cymbal,
-            openHiHat: mappedLane.openHiHat,
-          })
-
-          if (mappedLane.lane === 0) stats.kick += 1
-          if (mappedLane.lane === 1) stats.red += 1
-          if (mappedLane.lane === 2) stats.yellow += 1
-          if (mappedLane.lane === 3) stats.blue += 1
-          if (mappedLane.lane === 4) stats.green += 1
-          stats.laneCounts[mappedLane.lane] += 1
-          if (mappedLane.cymbal && mappedLane.lane >= 2) stats.cymbalFlags += 1
-          if (mappedLane.openHiHat) stats.openNotes += 1
-          if (mappedLane.lane === 0) {
-            kickSourceHistogram.set(remappedMidi, (kickSourceHistogram.get(remappedMidi) ?? 0) + 1)
-          }
+          voiceTick += beatLength
         }
-
-        voiceTick += beatLength
       }
-    }
 
-    absoluteBarTick += barTicks
+      absoluteBarTick += barTicks
+    }
   }
 
   return {
@@ -835,7 +837,7 @@ function collectTrackMappedNotes(
 
 function collectTrackStringedMappedNotes(
   data: GpParsedData,
-  trackIndex: number,
+  trackIndices: number[],
   options: ConvertOptions,
   instrumentMode: StringedInstrument,
 ): {
@@ -848,73 +850,76 @@ function collectTrackStringedMappedNotes(
 } {
   const sourceHistogram = new Map<number, number>()
   const ppq = data.ppq
-  const midiNormalizationMap = data.tracks[trackIndex]?.inputToOutputMidi ?? {}
   const manualMidiRemap = options.manualMidiRemap ?? {}
   const pitched: PitchedSourceNote[] = []
+  const selectedTrackIndices = [...new Set(trackIndices)]
 
-  let absoluteBarTick = 0
+  for (const trackIndex of selectedTrackIndices) {
+    const midiNormalizationMap = data.tracks[trackIndex]?.inputToOutputMidi ?? {}
+    let absoluteBarTick = 0
 
-  for (let masterBarIndex = 0; masterBarIndex < data.masterBars.length; masterBarIndex += 1) {
-    const masterBar = data.masterBars[masterBarIndex]
-    const { numerator, denominator } = parseTimeSignature(masterBar.time)
-    const barTicks = (ppq * 4 * numerator) / denominator
+    for (let masterBarIndex = 0; masterBarIndex < data.masterBars.length; masterBarIndex += 1) {
+      const masterBar = data.masterBars[masterBarIndex]
+      const { numerator, denominator } = parseTimeSignature(masterBar.time)
+      const barTicks = (ppq * 4 * numerator) / denominator
 
-    const perTrackBarIds = splitRefIds(masterBar.bars)
-    const barId = perTrackBarIds[trackIndex]
-    if (!barId) {
-      absoluteBarTick += barTicks
-      continue
-    }
-
-    const bar = data.barsById.get(barId)
-    if (!bar) {
-      absoluteBarTick += barTicks
-      continue
-    }
-
-    const voiceIds = bar.voices
-
-    for (const voiceId of voiceIds) {
-      const voice = data.voicesById.get(voiceId)
-      if (!voice) {
+      const perTrackBarIds = splitRefIds(masterBar.bars)
+      const barId = perTrackBarIds[trackIndex]
+      if (!barId) {
+        absoluteBarTick += barTicks
         continue
       }
 
-      let voiceTick = absoluteBarTick
-      const beatIds = voice.beats
+      const bar = data.barsById.get(barId)
+      if (!bar) {
+        absoluteBarTick += barTicks
+        continue
+      }
 
-      for (const beatId of beatIds) {
-        const beat = data.beatsById.get(beatId)
-        if (!beat) {
+      const voiceIds = bar.voices
+
+      for (const voiceId of voiceIds) {
+        const voice = data.voicesById.get(voiceId)
+        if (!voice) {
           continue
         }
 
-        const rhythm = beat.rhythmRef ? data.rhythmsById.get(beat.rhythmRef) : undefined
-        const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
-        const noteIds = beat.notes
+        let voiceTick = absoluteBarTick
+        const beatIds = voice.beats
 
-        for (const noteId of noteIds) {
-          const note = data.notesById.get(noteId)
-          if (!note || note.midi == null) {
+        for (const beatId of beatIds) {
+          const beat = data.beatsById.get(beatId)
+          if (!beat) {
             continue
           }
 
-          const normalizedMidi = midiNormalizationMap[note.midi] ?? note.midi
-          const remappedMidi = manualMidiRemap[normalizedMidi] ?? normalizedMidi
-          sourceHistogram.set(remappedMidi, (sourceHistogram.get(remappedMidi) ?? 0) + 1)
+          const rhythm = beat.rhythmRef ? data.rhythmsById.get(beat.rhythmRef) : undefined
+          const beatLength = rhythm ? rhythmDurationTicks(rhythm, ppq) : ppq / 4
+          const noteIds = beat.notes
 
-          pitched.push({
-            tick: Math.max(0, Math.round(voiceTick)),
-            length: options.forceZeroLengthNotes ? 0 : Math.max(0, Math.round(beatLength)),
-            midi: remappedMidi,
-          })
+          for (const noteId of noteIds) {
+            const note = data.notesById.get(noteId)
+            if (!note || note.midi == null) {
+              continue
+            }
+
+            const normalizedMidi = midiNormalizationMap[note.midi] ?? note.midi
+            const remappedMidi = manualMidiRemap[normalizedMidi] ?? normalizedMidi
+            sourceHistogram.set(remappedMidi, (sourceHistogram.get(remappedMidi) ?? 0) + 1)
+
+            pitched.push({
+              tick: Math.max(0, Math.round(voiceTick)),
+              length: options.forceZeroLengthNotes ? 0 : Math.max(0, Math.round(beatLength)),
+              midi: remappedMidi,
+            })
+          }
+
+          voiceTick += beatLength
         }
-
-        voiceTick += beatLength
       }
-    }
 
-    absoluteBarTick += barTicks
+      absoluteBarTick += barTicks
+    }
   }
 
   const maxFret = instrumentMode === 'bass' ? options.bassMaxFret : options.guitarMaxFret
@@ -976,27 +981,33 @@ export async function inspectGpFile(file: File): Promise<GpInspectionResult> {
 
 export async function convertGpToCloneHeroChart(
   file: File,
-  selectedTrackId: string,
+  selectedTrackIds: string[] | string,
   options: ConvertOptions,
 ): Promise<ConversionResult> {
   const data = await loadGpData(file)
-  const trackIndex = data.tracks.findIndex((track) => track.id === selectedTrackId)
+  const normalizedSelectedTrackIds = Array.isArray(selectedTrackIds)
+    ? selectedTrackIds
+    : [selectedTrackIds]
+  const uniqueTrackIds = [...new Set(normalizedSelectedTrackIds.map((trackId) => trackId.trim()).filter(Boolean))].slice(0, 3)
+  const trackIndices = uniqueTrackIds
+    .map((trackId) => data.tracks.findIndex((track) => track.id === trackId))
+    .filter((index) => index >= 0)
 
-  if (trackIndex < 0) {
-    throw new Error('Please choose a valid track from the GP file.')
+  if (trackIndices.length === 0) {
+    throw new Error('Please choose at least one valid track from the GP file.')
   }
 
-  const selectedTrack = data.tracks[trackIndex]
+  const selectedTracks = trackIndices.map((trackIndex) => data.tracks[trackIndex])
   const isStringed = options.instrumentMode === 'guitar' || options.instrumentMode === 'bass'
   const collected = isStringed
     ? collectTrackStringedMappedNotes(
         data,
-        trackIndex,
+        trackIndices,
         options,
         options.instrumentMode as StringedInstrument,
       )
     : {
-        ...collectTrackMappedNotes(data, trackIndex, options),
+        ...collectTrackMappedNotes(data, trackIndices, options),
         fretboardSummary: null,
       }
 
@@ -1011,15 +1022,15 @@ export async function convertGpToCloneHeroChart(
 
   if (notes.length === 0) {
     if (isStringed) {
-      throw new Error('No pitched notes mapped from the selected GP track for guitar/bass mode.')
+      throw new Error('No pitched notes mapped from the selected GP track(s) for guitar/bass mode.')
     }
 
     const likely = data.tracks.filter((track) => track.isDrums).map((track) => track.name).slice(0, 4)
     if (likely.length > 0) {
-      throw new Error(`No drum notes mapped from the selected GP track. Try one of: ${likely.join(', ')}`)
+      throw new Error(`No drum notes mapped from the selected GP track(s). Try one of: ${likely.join(', ')}`)
     }
 
-    throw new Error('No drum notes mapped from the selected GP track.')
+    throw new Error('No drum notes mapped from the selected GP track(s).')
   }
 
   const chartText = [
@@ -1041,8 +1052,8 @@ export async function convertGpToCloneHeroChart(
   ].join('\n')
 
   const base = file.name.replace(/\.[^/.]+$/, '')
-  const displayTrackName = trackDisplayName(selectedTrack)
-  const safeTrack = displayTrackName.replace(/[^a-zA-Z0-9-_]+/g, '_')
+  const displayTrackNames = selectedTracks.map((track) => trackDisplayName(track))
+  const safeTrack = displayTrackNames.join('_plus_').replace(/[^a-zA-Z0-9-_]+/g, '_').slice(0, 64)
 
   const suffix =
     options.instrumentMode === 'guitar'
@@ -1057,7 +1068,7 @@ export async function convertGpToCloneHeroChart(
     meta: {
       sourceFileName: file.name,
       ppq: data.ppq,
-      usedTrackNames: [displayTrackName],
+      usedTrackNames: displayTrackNames,
       totalMappedNotes: notes.length,
       stats,
       sourceNoteHistogram,
