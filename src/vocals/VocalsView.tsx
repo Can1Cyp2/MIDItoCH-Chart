@@ -96,6 +96,29 @@ function VocalsView({ onBack }: VocalsViewProps) {
     setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, lyric } : note)))
   }
 
+  /**
+   * Re-seat lyric tokens across notes from `fromIndex` onward (in the given
+   * timeline order). 'later' inserts a blank at fromIndex (pushing lyrics to
+   * later notes); 'earlier' removes fromIndex's lyric (pulling them back).
+   */
+  function shiftLyrics(orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later'): void {
+    setNotes((prev) => {
+      const lyricById = new Map(prev.map((note) => [note.id, note.lyric]))
+      const lyrics = orderedIds.map((id) => lyricById.get(id) ?? '')
+      if (direction === 'later') {
+        lyrics.splice(fromIndex, 0, '')
+        lyrics.pop()
+      } else {
+        lyrics.splice(fromIndex, 1)
+        lyrics.push('')
+      }
+      const shifted = new Map(orderedIds.map((id, index) => [id, lyrics[index]]))
+      return prev.map((note) =>
+        shifted.has(note.id) ? { ...note, lyric: shifted.get(note.id) ?? '' } : note,
+      )
+    })
+  }
+
   function onExport(): void {
     setError(null)
     if (!parsed || notes.length === 0) {
@@ -236,7 +259,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
           {notes.length === 0 ? (
             <p className="meta-row">Load a melody MIDI above to start editing notes.</p>
           ) : (
-            <VocalTimeline notes={notes} onChangeLyric={updateNoteLyric} />
+            <VocalTimeline notes={notes} onChangeLyric={updateNoteLyric} onShift={shiftLyrics} />
           )}
         </article>
       </section>

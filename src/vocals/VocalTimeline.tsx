@@ -9,6 +9,7 @@ const MIN_NOTE_WIDTH = 8
 interface VocalTimelineProps {
   notes: VocalNote[]
   onChangeLyric: (id: string, lyric: string) => void
+  onShift: (orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later') => void
 }
 
 interface PitchBounds {
@@ -58,7 +59,7 @@ const NotesLayer = memo(function NotesLayer({
   )
 })
 
-function VocalTimeline({ notes, onChangeLyric }: VocalTimelineProps) {
+function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [pxPerSec, setPxPerSec] = useState(120)
@@ -224,6 +225,18 @@ function VocalTimeline({ notes, onChangeLyric }: VocalTimelineProps) {
     setSelectedId(sortedNotes[next].id)
   }
 
+  function shift(direction: 'earlier' | 'later'): void {
+    if (sortedNotes.length === 0) {
+      return
+    }
+    const fromIndex = selectedIndex >= 0 ? selectedIndex : 0
+    onShift(
+      sortedNotes.map((n) => n.id),
+      fromIndex,
+      direction,
+    )
+  }
+
   const rulerMarks = useMemo(() => {
     const stepSeconds = pxPerSec < 50 ? 5 : pxPerSec < 110 ? 2 : 1
     const marks: number[] = []
@@ -348,6 +361,30 @@ function VocalTimeline({ notes, onChangeLyric }: VocalTimelineProps) {
         </button>
         <button type="button" className="mini-btn" disabled={!selectedNote} title="Next note" onClick={() => step(1)}>
           ▶
+        </button>
+      </div>
+
+      <div className="shift-row">
+        <span className="shift-label">
+          Shift lyrics from {selectedNote ? 'selected note' : 'start'}:
+        </span>
+        <button
+          type="button"
+          className="secondary-btn"
+          disabled={sortedNotes.length === 0}
+          title="Pull lyrics back — remove this note's lyric, everything after moves one note earlier"
+          onClick={() => shift('earlier')}
+        >
+          ← earlier
+        </button>
+        <button
+          type="button"
+          className="secondary-btn"
+          disabled={sortedNotes.length === 0}
+          title="Push lyrics forward — insert a blank here, everything after moves one note later"
+          onClick={() => shift('later')}
+        >
+          later →
         </button>
       </div>
 

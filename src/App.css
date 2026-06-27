@@ -876,10 +876,20 @@ textarea {
 }
 
 .note-editor,
-.type-along {
+.type-along,
+.shift-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.shift-row {
+  flex-wrap: wrap;
+}
+
+.shift-label {
+  font-size: 0.85rem;
+  color: #b9d6ff;
 }
 
 .editor-pitch {
