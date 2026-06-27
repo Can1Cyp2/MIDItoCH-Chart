@@ -5,6 +5,7 @@ const LANE_HEIGHT = 16
 const RULER_HEIGHT = 22
 const PITCH_PADDING = 2
 const MIN_NOTE_WIDTH = 8
+const LYRIC_LANE_HEIGHT = 34
 
 interface VocalTimelineProps {
   notes: VocalNote[]
@@ -32,6 +33,7 @@ const NotesLayer = memo(function NotesLayer({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
+  const lyricLaneTop = RULER_HEIGHT + bounds.height
   return (
     <>
       {notes.map((note) => {
@@ -45,13 +47,35 @@ const NotesLayer = memo(function NotesLayer({
             key={note.id}
             className={`tl-note ${isSelected ? 'selected' : ''} ${note.lyric.trim() ? 'has-lyric' : ''}`}
             style={{ left, width, top, height: LANE_HEIGHT - 2 }}
-            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s`}
+            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — click to select and edit`}
             onClick={(event) => {
               event.stopPropagation()
               onSelect(note.id)
             }}
           >
-            <span className="tl-note-label">{note.lyric || midiToNoteName(note.midi)}</span>
+            <span className="tl-note-label">{midiToNoteName(note.midi)}</span>
+          </button>
+        )
+      })}
+      <div className="tl-lyric-lane" style={{ top: lyricLaneTop, height: LYRIC_LANE_HEIGHT }} />
+      {notes.map((note) => {
+        const text = note.lyric.trim()
+        if (!text) {
+          return null
+        }
+        return (
+          <button
+            type="button"
+            key={`lyric-${note.id}`}
+            className={`tl-lyric ${note.id === selectedId ? 'selected' : ''}`}
+            style={{ left: note.time * pxPerSec, top: lyricLaneTop + 6 }}
+            title={`Lyric for ${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — click to select`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelect(note.id)
+            }}
+          >
+            {text}
           </button>
         )
       })}
@@ -249,7 +273,10 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
   return (
     <div className="timeline-wrap">
       <div className="transport">
-        <label className="audio-pick">
+        <label
+          className="audio-pick"
+          title="Load the song (or an isolated vocal stem) to play under the melody. The full mix works, but a vocal-only stem is easiest to line up by ear."
+        >
           <input
             type="file"
             accept="audio/*"
@@ -257,14 +284,20 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
           />
           {audioUrl ? 'Change song audio' : 'Load song / vocal stem'}
         </label>
-        <button type="button" className="secondary-btn" onClick={togglePlay} disabled={!audioUrl}>
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={togglePlay}
+          disabled={!audioUrl}
+          title="Play or pause the loaded audio. The red playhead follows along and the view auto-scrolls."
+        >
           {isPlaying ? '⏸ Pause' : '▶ Play'}
         </button>
-        <span className="time-readout">
+        <span className="time-readout" title="Current audio playback position, in seconds">
           <span ref={timeLabelRef}>0.00s</span>
         </span>
 
-        <label className="ctrl">
+        <label className="ctrl" title="Stretch or squeeze the time axis — zoom in for dense passages, out for an overview">
           Zoom
           <input
             type="range"
@@ -275,26 +308,54 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
           />
         </label>
 
-        <div className="ctrl offset-ctrl">
+        <div
+          className="ctrl offset-ctrl"
+          title="Slide the whole melody relative to the audio so the notes line up with what you hear. Use this if the MIDI and audio don't start at the same moment."
+        >
           Align offset
           <div className="offset-buttons">
-            <button type="button" className="mini-btn" onClick={() => setAudioOffset((o) => o - 0.5)}>
+            <button
+              type="button"
+              className="mini-btn"
+              title="Shift melody 0.5s earlier relative to the audio"
+              onClick={() => setAudioOffset((o) => o - 0.5)}
+            >
               −0.5
             </button>
-            <button type="button" className="mini-btn" onClick={() => setAudioOffset((o) => o - 0.05)}>
+            <button
+              type="button"
+              className="mini-btn"
+              title="Fine shift: 0.05s earlier"
+              onClick={() => setAudioOffset((o) => o - 0.05)}
+            >
               −
             </button>
-            <span className="offset-value">{audioOffset.toFixed(2)}s</span>
-            <button type="button" className="mini-btn" onClick={() => setAudioOffset((o) => o + 0.05)}>
+            <span className="offset-value" title="Current melody-to-audio offset in seconds">
+              {audioOffset.toFixed(2)}s
+            </span>
+            <button
+              type="button"
+              className="mini-btn"
+              title="Fine shift: 0.05s later"
+              onClick={() => setAudioOffset((o) => o + 0.05)}
+            >
               +
             </button>
-            <button type="button" className="mini-btn" onClick={() => setAudioOffset((o) => o + 0.5)}>
+            <button
+              type="button"
+              className="mini-btn"
+              title="Shift melody 0.5s later relative to the audio"
+              onClick={() => setAudioOffset((o) => o + 0.5)}
+            >
               +0.5
             </button>
           </div>
         </div>
 
-        <label className="ctrl follow-ctrl">
+        <label
+          className="ctrl follow-ctrl"
+          title="When on, the highlighted note tracks the playhead as the song plays, so type-along lands syllables on the note currently being sung."
+        >
           <input type="checkbox" checked={follow} onChange={(event) => setFollow(event.target.checked)} />
           Follow playhead
         </label>
@@ -313,7 +374,7 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
       <div className="timeline-scroll" ref={scrollRef} onClick={onTimelineClick}>
         <div
           className="timeline-content"
-          style={{ width: contentWidth, height: bounds.height + RULER_HEIGHT }}
+          style={{ width: contentWidth, height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
         >
           <div className="tl-ruler" style={{ width: contentWidth }}>
             {rulerMarks.map((t) => (
@@ -329,15 +390,27 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
             selectedId={selectedId}
             onSelect={selectNote}
           />
-          <div ref={playheadRef} className="tl-playhead" style={{ height: bounds.height + RULER_HEIGHT }} />
+          <div
+            ref={playheadRef}
+            className="tl-playhead"
+            style={{ height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
+          />
         </div>
       </div>
 
       <div className="note-editor">
-        <button type="button" className="mini-btn" onClick={() => step(-1)} title="Previous note">
+        <button
+          type="button"
+          className="mini-btn"
+          onClick={() => step(-1)}
+          title="Select the previous note"
+        >
           ◀
         </button>
-        <span className="editor-pitch">
+        <span
+          className="editor-pitch"
+          title="Pitch and start time of the note you're editing"
+        >
           {selectedNote ? `${midiToNoteName(selectedNote.midi)} · ${selectedNote.time.toFixed(2)}s` : 'No note selected'}
         </span>
         <input
@@ -345,21 +418,34 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
           value={selectedNote?.lyric ?? ''}
           placeholder={selectedNote ? 'syllable' : 'click a note'}
           disabled={!selectedNote}
+          title="Edit the selected note's syllable. End with '-' to continue a word; use '+' for a held/slide note."
           onChange={(event) => selectedNote && onChangeLyric(selectedNote.id, event.target.value)}
         />
-        <button type="button" className="mini-btn" disabled={!selectedNote} title="Held / slide" onClick={() => applyToSelected(() => '+')}>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!selectedNote}
+          title="Mark as '+' — a held note / pitch slide carrying the previous syllable"
+          onClick={() => applyToSelected(() => '+')}
+        >
           +
         </button>
         <button
           type="button"
           className="mini-btn"
           disabled={!selectedNote}
-          title="Continue word into next note"
+          title="Toggle a trailing hyphen — continue this word into the next note"
           onClick={() => applyToSelected((l) => (l.endsWith('-') ? l.replace(/-+$/, '') : `${l.replace(/-+$/, '')}-`))}
         >
           -
         </button>
-        <button type="button" className="mini-btn" disabled={!selectedNote} title="Next note" onClick={() => step(1)}>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!selectedNote}
+          title="Select the next note"
+          onClick={() => step(1)}
+        >
           ▶
         </button>
       </div>
@@ -393,6 +479,7 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
           className="note-lyric"
           value={typeAlong}
           placeholder="Type-along: play the song, type the current syllable, press Enter"
+          title="Play the song, then type each syllable and press Enter. It lands on the highlighted note (the one being sung when Follow playhead is on)."
           onChange={(event) => setTypeAlong(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -401,7 +488,13 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
             }
           }}
         />
-        <button type="button" className="secondary-btn" onClick={commitTypeAlong} disabled={!selectedNote}>
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={commitTypeAlong}
+          disabled={!selectedNote}
+          title="Assign the typed syllable to the selected note, then move to the next note"
+        >
           Set &amp; advance
         </button>
       </div>

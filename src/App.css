@@ -864,6 +864,40 @@ textarea {
   pointer-events: none;
 }
 
+.tl-lyric-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  border-top: 1px solid rgba(146, 193, 255, 0.35);
+  background: rgba(8, 24, 48, 0.6);
+}
+
+.tl-lyric {
+  position: absolute;
+  transform: translateX(-2px);
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #fff4d2;
+  background: rgba(255, 159, 28, 0.22);
+  border: 1px solid rgba(255, 231, 153, 0.55);
+  border-radius: 6px;
+  padding: 1px 6px;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.tl-lyric:hover {
+  background: rgba(255, 159, 28, 0.4);
+}
+
+.tl-lyric.selected {
+  outline: 2px solid #fff4d2;
+  z-index: 5;
+}
+
 .tl-playhead {
   position: absolute;
   top: 0;

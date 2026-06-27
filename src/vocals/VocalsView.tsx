@@ -151,7 +151,12 @@ function VocalsView({ onBack }: VocalsViewProps) {
     <main className="page-shell">
       <section className="hero-card">
         <div className="hero-headline">
-          <button type="button" className="link-back" onClick={onBack}>
+          <button
+            type="button"
+            className="link-back"
+            onClick={onBack}
+            title="Return to the MIDI/GuitarPro → Clone Hero chart converter"
+          >
             ← Back to chart converter
           </button>
           <p className="kicker">YARG / Rock Band Vocals</p>
@@ -215,7 +220,12 @@ function VocalsView({ onBack }: VocalsViewProps) {
           </p>
 
           <div className="button-row">
-            <button type="button" className="primary-btn" onClick={onAutoMap}>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={onAutoMap}
+              title="Auto-assign the pasted lyrics to the melody notes in order. Extra held notes become '+' slides; you can fine-tune everything in the timeline below."
+            >
               Map lyrics to melody
             </button>
             <button
@@ -223,6 +233,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
               className="secondary-btn"
               onClick={onExport}
               disabled={!parsed || notes.length === 0}
+              title="Download a PART VOCALS .mid (notes + lyric events + phrase markers) ready for YARG, or to merge into your notes.mid"
             >
               Export PART VOCALS .mid
             </button>
