@@ -857,20 +857,21 @@ function App() {
               </label>
             ) : null}
 
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={options.accentOpenHiHatOnYellowCymbal}
-                disabled={!isDrumMode}
-                onChange={(event) =>
-                  setOptions((prev) => ({
-                    ...prev,
-                    accentOpenHiHatOnYellowCymbal: event.target.checked,
-                  }))
-                }
-              />
-              Accent yellow cymbal (hi-hat/open hi-hat) {isDrumMode ? '' : '(drums only)'}
-            </label>
+            {isDrumMode ? (
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={options.accentOpenHiHatOnYellowCymbal}
+                  onChange={(event) =>
+                    setOptions((prev) => ({
+                      ...prev,
+                      accentOpenHiHatOnYellowCymbal: event.target.checked,
+                    }))
+                  }
+                />
+                Accent yellow cymbal (hi-hat/open hi-hat)
+              </label>
+            ) : null}
 
             <label className="toggle-row">
               <input
