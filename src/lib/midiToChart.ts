@@ -137,7 +137,7 @@ const DEFAULT_OPTIONS: ConvertOptions = {
   instrumentMode: 'drums',
   preferChannel10Only: true,
   emitCymbalMarkers: true,
-  accentOpenHiHatOnYellowCymbal: true,
+  accentOpenHiHatOnYellowCymbal: false,
   forceZeroLengthNotes: true,
   preserveStackedHits: true,
   difficulty: 'ExpertDrums',
