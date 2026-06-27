@@ -24,6 +24,10 @@ export interface VocalNote {
   id: string
   ticks: number
   durationTicks: number
+  /** Start time in seconds (for audio overlay / playback). */
+  time: number
+  /** Duration in seconds. */
+  duration: number
   midi: number
   /** Lyric token for this note, including any `-`/`+` connectors. '' = unset. */
   lyric: string
@@ -64,6 +68,8 @@ export async function parseVocalMidi(file: File): Promise<ParsedVocalMidi> {
           id: `n-${index}-${note.ticks}-${note.midi}`,
           ticks: note.ticks,
           durationTicks: Math.max(1, note.durationTicks),
+          time: note.time,
+          duration: Math.max(0.05, note.duration),
           midi: note.midi,
           lyric: '',
         }))

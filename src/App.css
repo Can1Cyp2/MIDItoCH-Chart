@@ -724,3 +724,170 @@ textarea {
 .mini-btn:hover {
   border-color: #ffe95a;
 }
+
+/* --- DAW-style vocals timeline --- */
+.vocals-single {
+  grid-template-columns: 1fr;
+}
+
+.timeline-section {
+  margin-top: 1.2rem;
+}
+
+.timeline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.audio-pick {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid rgba(146, 193, 255, 0.55);
+  background: rgba(23, 54, 99, 0.85);
+  color: #d8ebff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.audio-pick input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.time-readout {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #ffe9ad;
+  min-width: 4rem;
+}
+
+.ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #b9d6ff;
+}
+
+.offset-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.offset-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2rem;
+  text-align: center;
+  color: #ffe9ad;
+}
+
+.timeline-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid rgba(146, 193, 255, 0.35);
+  border-radius: 12px;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.04) 0,
+      rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px,
+      transparent 16px
+    ),
+    rgba(4, 16, 35, 0.75);
+  cursor: text;
+}
+
+.timeline-content {
+  position: relative;
+}
+
+.tl-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 22px;
+  border-bottom: 1px solid rgba(146, 193, 255, 0.3);
+}
+
+.tl-ruler-mark {
+  position: absolute;
+  top: 3px;
+  font-size: 0.68rem;
+  color: rgba(184, 209, 247, 0.7);
+  border-left: 1px solid rgba(146, 193, 255, 0.25);
+  padding-left: 3px;
+  height: 100%;
+}
+
+.tl-note {
+  position: absolute;
+  border: 1px solid rgba(255, 231, 153, 0.7);
+  background: linear-gradient(180deg, rgba(88, 175, 255, 0.85), rgba(40, 110, 200, 0.85));
+  border-radius: 5px;
+  padding: 0 4px;
+  font-size: 0.7rem;
+  color: #06203f;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.tl-note.has-lyric {
+  background: linear-gradient(180deg, rgba(255, 217, 77, 0.95), rgba(255, 159, 28, 0.95));
+}
+
+.tl-note.selected {
+  outline: 2px solid #fff4d2;
+  z-index: 3;
+}
+
+.tl-note-label {
+  pointer-events: none;
+}
+
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  background: #ff5a7a;
+  box-shadow: 0 0 6px rgba(255, 90, 122, 0.8);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.note-editor,
+.type-along {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.editor-pitch {
+  min-width: 9rem;
+  font-weight: 700;
+  color: #ffe9ad;
+}
+
+.type-along .note-lyric {
+  flex: 1;
+}

@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react'
 import {
   alignLyricsToNotes,
   buildVocalsMidi,
-  midiToNoteName,
   parseVocalMidi,
   syllabifyLyrics,
   type ParsedVocalMidi,
   type VocalNote,
 } from '../lib/vocalsChart'
+import VocalTimeline from './VocalTimeline'
 
 const ACCEPTED_MIDI = '.mid,.midi,audio/midi,audio/x-midi'
 
@@ -96,18 +96,6 @@ function VocalsView({ onBack }: VocalsViewProps) {
     setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, lyric } : note)))
   }
 
-  function toggleHyphen(id: string): void {
-    setNotes((prev) =>
-      prev.map((note) => {
-        if (note.id !== id) {
-          return note
-        }
-        const base = note.lyric.replace(/-+$/, '')
-        return { ...note, lyric: note.lyric.endsWith('-') ? base : `${base}-` }
-      }),
-    )
-  }
-
   function onExport(): void {
     setError(null)
     if (!parsed || notes.length === 0) {
@@ -158,7 +146,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
         </div>
       </section>
 
-      <section className="grid-layout">
+      <section className="grid-layout vocals-single">
         <article className="panel">
           <h2>1. Vocal melody MIDI</h2>
           <label className="dropzone">
@@ -234,48 +222,21 @@ function VocalsView({ onBack }: VocalsViewProps) {
           </details>
         </article>
 
+      </section>
+
+      <section className="timeline-section">
         <article className="panel">
-          <h2>3. Per-note lyrics</h2>
+          <h2>3. Visual editor — line the melody up to the song</h2>
           <p className="meta-row">
-            {mappedCount}/{notes.length} notes have a lyric. Use <code>+</code> for a held/slide note
-            and the <code>-</code> button to continue a word into the next note.
+            {mappedCount}/{notes.length} notes have a lyric. Load the song (or an isolated vocal stem)
+            below, press play, and nudge the <strong>align offset</strong> to slide the melody under
+            the audio. Click a note to edit it, or use <strong>type-along</strong> to add syllables as
+            the song plays.
           </p>
           {notes.length === 0 ? (
-            <p className="meta-row">Load a melody MIDI to start editing notes.</p>
+            <p className="meta-row">Load a melody MIDI above to start editing notes.</p>
           ) : (
-            <div className="note-table">
-              {notes.map((note, index) => (
-                <div key={note.id} className="note-row">
-                  <span className="note-index">{index + 1}</span>
-                  <span className="note-pitch">{midiToNoteName(note.midi)}</span>
-                  <span className="note-beat">
-                    {parsed ? `${(note.ticks / parsed.ppq).toFixed(2)}b` : ''}
-                  </span>
-                  <input
-                    className="note-lyric"
-                    value={note.lyric}
-                    placeholder="syllable"
-                    onChange={(event) => updateNoteLyric(note.id, event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="mini-btn"
-                    title="Held / pitch slide from previous note"
-                    onClick={() => updateNoteLyric(note.id, '+')}
-                  >
-                    +
-                  </button>
-                  <button
-                    type="button"
-                    className="mini-btn"
-                    title="Continue this word into the next note"
-                    onClick={() => toggleHyphen(note.id)}
-                  >
-                    -
-                  </button>
-                </div>
-              ))}
-            </div>
+            <VocalTimeline notes={notes} onChangeLyric={updateNoteLyric} />
           )}
         </article>
       </section>
