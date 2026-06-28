@@ -576,6 +576,13 @@ function VocalTimeline({
     const next = Math.min(sortedNotes.length - 1, Math.max(0, base + delta))
     const note = sortedNotes[next]
     setSelectedId(note.id)
+    // Move the playhead to the note's start.
+    const audio = audioRef.current
+    if (audio) {
+      audio.currentTime = Math.max(0, note.time + audioOffset)
+    } else {
+      synthRef.current?.seek(note.time)
+    }
     // Keep the newly selected note in view.
     const scroller = scrollRef.current
     if (scroller) {
