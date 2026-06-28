@@ -478,19 +478,23 @@ function VocalTimeline({
   }
 
   function togglePlay(): void {
+    const synth = synthRef.current
     const audio = audioRef.current
     if (audio) {
+      // Song loaded: audio is the clock, but play the melody synth alongside it
+      // so the notes are audible over the mix (balance with the volume sliders).
       if (audio.paused) {
         void audio.play()
+        synth?.play(audio.currentTime - audioOffset)
         setIsPlaying(true)
       } else {
         audio.pause()
+        synth?.pause()
         setIsPlaying(false)
       }
       return
     }
-    // No song loaded: play the synthesized melody instead.
-    const synth = synthRef.current
+    // No song loaded: play the synthesized melody on its own.
     if (!synth || sortedNotes.length === 0) {
       return
     }
@@ -549,6 +553,7 @@ function VocalTimeline({
     const audio = audioRef.current
     if (audio) {
       audio.currentTime = Math.max(0, melodyTime + audioOffset)
+      synthRef.current?.seek(melodyTime)
     } else {
       synthRef.current?.seek(melodyTime)
     }
@@ -600,6 +605,7 @@ function VocalTimeline({
     const audio = audioRef.current
     if (audio) {
       audio.currentTime = Math.max(0, note.time + audioOffset)
+      synthRef.current?.seek(note.time)
     } else {
       synthRef.current?.seek(note.time)
     }
