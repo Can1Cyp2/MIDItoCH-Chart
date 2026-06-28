@@ -518,6 +518,26 @@ function VocalTimeline({
     onUpdateNote(selectedNote.id, { duration: scaleDown(selectedNote.duration) + deltaSeconds })
   }
 
+  function stopAll(): void {
+    const audio = audioRef.current
+    if (audio) {
+      audio.pause()
+      audio.currentTime = 0
+    }
+    const synth = synthRef.current
+    if (synth) {
+      synth.pause()
+      synth.seek(0)
+    }
+    setIsPlaying(false)
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = 0
+    }
+    if (playheadRef.current) {
+      playheadRef.current.style.left = '0px'
+    }
+  }
+
   function onTimelineClick(event: React.MouseEvent<HTMLDivElement>): void {
     const scroller = scrollRef.current
     if (!scroller) {
@@ -641,6 +661,14 @@ function VocalTimeline({
           }
         >
           {isPlaying ? '⏸ Pause' : audioUrl ? '▶ Play' : '▶ Play melody'}
+        </button>
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={stopAll}
+          title="Stop all sounds (song + melody) and return the playhead to the start"
+        >
+          ⏹ Stop
         </button>
         <span className="time-readout" title="Current audio playback position, in seconds">
           <span ref={timeLabelRef}>0.00s</span>
