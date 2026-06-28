@@ -39,7 +39,6 @@ const NotesLayer = memo(function NotesLayer({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
-  const lyricLaneTop = RULER_HEIGHT + bounds.height
   return (
     <>
       {notes.map((note) => {
@@ -63,28 +62,6 @@ const NotesLayer = memo(function NotesLayer({
           </button>
         )
       })}
-      <div className="tl-lyric-lane" style={{ top: lyricLaneTop, height: LYRIC_LANE_HEIGHT }} />
-      {notes.map((note) => {
-        const text = note.lyric.trim()
-        if (!text) {
-          return null
-        }
-        return (
-          <button
-            type="button"
-            key={`lyric-${note.id}`}
-            className={`tl-lyric ${note.id === selectedId ? 'selected' : ''}`}
-            style={{ left: note.time * pxPerSec, top: lyricLaneTop + 6 }}
-            title={`Lyric for ${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — click to select`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onSelect(note.id)
-            }}
-          >
-            {text}
-          </button>
-        )
-      })}
     </>
   )
 })
@@ -98,6 +75,8 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [typeAlong, setTypeAlong] = useState('')
   const [audioDuration, setAudioDuration] = useState(0)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
   const [peaks, setPeaks] = useState<WavePeaks | null>(null)
   const [detectedBpm, setDetectedBpm] = useState<number | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -389,6 +368,19 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
     onChangeLyric(selectedNote.id, transform(selectedNote.lyric))
   }
 
+  function startInlineEdit(note: VocalNote): void {
+    setSelectedId(note.id)
+    setDraft(note.lyric)
+    setEditingId(note.id)
+  }
+
+  function commitInlineEdit(): void {
+    if (editingId) {
+      onChangeLyric(editingId, draft.trim())
+    }
+    setEditingId(null)
+  }
+
   function step(delta: number): void {
     if (sortedNotes.length === 0) {
       return
@@ -595,6 +587,57 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
             onSelect={selectNote}
           />
           <div
+            className="tl-lyric-lane"
+            style={{ top: RULER_HEIGHT + bounds.height, height: LYRIC_LANE_HEIGHT }}
+          />
+          {sortedNotes.map((note) => {
+            const left = note.time * pxPerSec
+            const top = RULER_HEIGHT + bounds.height + 6
+            if (editingId === note.id) {
+              return (
+                <input
+                  key={`lyric-${note.id}`}
+                  className="tl-lyric-input"
+                  style={{ left, top }}
+                  autoFocus
+                  value={draft}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onBlur={commitInlineEdit}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      commitInlineEdit()
+                    } else if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setEditingId(null)
+                    }
+                  }}
+                />
+              )
+            }
+            const text = note.lyric.trim()
+            return (
+              <button
+                key={`lyric-${note.id}`}
+                type="button"
+                className={`tl-lyric ${note.id === selectedId ? 'selected' : ''} ${text ? '' : 'empty'}`}
+                style={{ left, top }}
+                title={`${text ? 'Lyric' : 'No lyric yet'} for ${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — click to select, double-click to edit`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setSelectedId(note.id)
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation()
+                  startInlineEdit(note)
+                }}
+              >
+                {text || '+'}
+              </button>
+            )
+          })}
+          <div
             ref={playheadRef}
             className="tl-playhead"
             style={{ height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
@@ -654,28 +697,35 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
         </button>
       </div>
 
-      <div className="shift-row">
-        <span className="shift-label">
-          Shift lyrics from {selectedNote ? 'selected note' : 'start'}:
-        </span>
-        <button
-          type="button"
-          className="secondary-btn"
-          disabled={sortedNotes.length === 0}
-          title="Pull lyrics back — remove this note's lyric, everything after moves one note earlier"
-          onClick={() => shift('earlier')}
-        >
-          ← earlier
-        </button>
-        <button
-          type="button"
-          className="secondary-btn"
-          disabled={sortedNotes.length === 0}
-          title="Push lyrics forward — insert a blank here, everything after moves one note later"
-          onClick={() => shift('later')}
-        >
-          later →
-        </button>
+      <div className="shift-block">
+        <p className="shift-help">
+          <strong>Shift lyrics:</strong> if the mapping is off from a certain point on, click a note
+          or lyric where it goes wrong, then shift the whole grid beyond that point — without
+          retyping. With nothing selected it shifts everything.
+        </p>
+        <div className="shift-row">
+          <span className="shift-label">
+            From {selectedNote ? `${midiToNoteName(selectedNote.midi)} @ ${selectedNote.time.toFixed(2)}s` : 'the start'}:
+          </span>
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={sortedNotes.length === 0}
+            title="A word landed too late: remove the lyric here and pull everything after it back one note"
+            onClick={() => shift('earlier')}
+          >
+            ← move lyrics earlier
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={sortedNotes.length === 0}
+            title="A word landed too early: insert a blank here and push everything after it forward one note"
+            onClick={() => shift('later')}
+          >
+            move lyrics later →
+          </button>
+        </div>
       </div>
 
       <div className="type-along">

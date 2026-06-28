@@ -291,10 +291,10 @@ function VocalsView({ onBack }: VocalsViewProps) {
         <article className="panel">
           <h2>3. Visual editor — line the melody up to the song</h2>
           <p className="meta-row">
-            {mappedCount}/{notes.length} notes have a lyric. Load the song (or an isolated vocal stem)
-            below, press play, and nudge the <strong>align offset</strong> to slide the melody under
-            the audio. Click a note to edit it, or use <strong>type-along</strong> to add syllables as
-            the song plays.
+            {mappedCount}/{notes.length} notes have a lyric. Press <strong>Play melody</strong> to hear
+            the notes, or load a song and nudge the <strong>align offset</strong> to slide the melody
+            under the audio. <strong>Double-click any lyric below a note to edit it</strong> right in
+            place, or use <strong>type-along</strong> to add syllables as it plays.
           </p>
           {notes.length === 0 ? (
             <p className="meta-row">Load a melody MIDI above to start editing notes.</p>

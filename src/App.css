@@ -940,6 +940,46 @@ textarea {
   z-index: 5;
 }
 
+.tl-lyric.empty {
+  background: rgba(146, 193, 255, 0.12);
+  border-color: rgba(146, 193, 255, 0.35);
+  color: rgba(214, 235, 255, 0.5);
+  font-weight: 600;
+  opacity: 0.55;
+}
+
+.tl-lyric.empty:hover {
+  opacity: 1;
+  background: rgba(146, 193, 255, 0.25);
+}
+
+.tl-lyric-input {
+  position: absolute;
+  transform: translateX(-2px);
+  z-index: 6;
+  width: 5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #06203f;
+  background: #fff4d2;
+  border: 2px solid #ff9f1c;
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+
+.shift-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.shift-help {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #b9d6ff;
+  line-height: 1.4;
+}
+
 .tl-playhead {
   position: absolute;
   top: 0;
