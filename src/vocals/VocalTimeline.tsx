@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { midiToNoteName, type VocalNote } from '../lib/vocalsChart'
 import { computePeaks, decodeAudio, detectBpm, type WavePeaks } from '../lib/audioAnalysis'
+import { MelodySynth } from '../lib/melodySynth'
 
 type BpmSource = 'midi' | 'detected' | 'custom'
 
@@ -109,6 +110,7 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
   const timeLabelRef = useRef<HTMLSpanElement | null>(null)
   const waveRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
+  const synthRef = useRef<MelodySynth | null>(null)
 
   const effectiveBpm =
     bpmSource === 'midi'
@@ -127,6 +129,23 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
   })
 
   const sortedNotes = useMemo(() => [...notes].sort((a, b) => a.time - b.time), [notes])
+
+  // Melody synth: lives for the component's lifetime; notes kept in sync.
+  useEffect(() => {
+    const synth = new MelodySynth()
+    synth.onEnded = () => setIsPlaying(false)
+    synthRef.current = synth
+    return () => {
+      synth.dispose()
+      synthRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    synthRef.current?.setNotes(
+      sortedNotes.map((n) => ({ time: n.time, duration: n.duration, midi: n.midi })),
+    )
+  }, [sortedNotes])
 
   const bounds = useMemo<PitchBounds>(() => {
     if (sortedNotes.length === 0) {
@@ -151,28 +170,41 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
   const selectedNote = selectedIndex >= 0 ? sortedNotes[selectedIndex] : null
 
   // Position the playhead, time readout, and (optionally) selection each frame.
+  // The clock is the audio element when a song is loaded, otherwise the synth.
   useEffect(() => {
     function tick() {
       const audio = audioRef.current
+      const synth = synthRef.current
+      let melodyTime: number | null = null
+      let readout = 0
+      let playing = false
       if (audio) {
-        const melodyTime = audio.currentTime - offsetRef.current
+        melodyTime = audio.currentTime - offsetRef.current
+        readout = audio.currentTime
+        playing = !audio.paused
+      } else if (synth) {
+        melodyTime = synth.getTime()
+        readout = melodyTime
+        playing = synth.isPlaying
+      }
+
+      if (melodyTime != null) {
         const left = melodyTime * pxRef.current
         if (playheadRef.current) {
           playheadRef.current.style.left = `${left}px`
         }
         if (timeLabelRef.current) {
-          timeLabelRef.current.textContent = `${audio.currentTime.toFixed(2)}s`
+          timeLabelRef.current.textContent = `${readout.toFixed(2)}s`
         }
         const scroller = scrollRef.current
-        if (scroller && !audio.paused) {
+        if (scroller && playing) {
           const view = scroller.clientWidth
           if (left < scroller.scrollLeft + 60 || left > scroller.scrollLeft + view - 160) {
             scroller.scrollLeft = left - view / 3
           }
           if (followRef.current) {
-            const cur = sortedNotes.find(
-              (n) => melodyTime >= n.time && melodyTime < n.time + n.duration,
-            )
+            const time = melodyTime
+            const cur = sortedNotes.find((n) => time >= n.time && time < n.time + n.duration)
             if (cur) {
               setSelectedId((prev) => (prev === cur.id ? prev : cur.id))
             }
@@ -296,29 +328,43 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
 
   function togglePlay(): void {
     const audio = audioRef.current
-    if (!audio) {
+    if (audio) {
+      if (audio.paused) {
+        void audio.play()
+        setIsPlaying(true)
+      } else {
+        audio.pause()
+        setIsPlaying(false)
+      }
       return
     }
-    if (audio.paused) {
-      void audio.play()
-      setIsPlaying(true)
-    } else {
-      audio.pause()
+    // No song loaded: play the synthesized melody instead.
+    const synth = synthRef.current
+    if (!synth || sortedNotes.length === 0) {
+      return
+    }
+    if (synth.isPlaying) {
+      synth.pause()
       setIsPlaying(false)
+    } else {
+      synth.play()
+      setIsPlaying(true)
     }
   }
 
   function onTimelineClick(event: React.MouseEvent<HTMLDivElement>): void {
     const scroller = scrollRef.current
-    const audio = audioRef.current
     if (!scroller) {
       return
     }
     const rect = scroller.getBoundingClientRect()
     const x = event.clientX - rect.left + scroller.scrollLeft
     const melodyTime = Math.max(0, x / pxPerSec)
+    const audio = audioRef.current
     if (audio) {
       audio.currentTime = Math.max(0, melodyTime + audioOffset)
+    } else {
+      synthRef.current?.seek(melodyTime)
     }
   }
 
@@ -391,10 +437,14 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
           type="button"
           className="secondary-btn"
           onClick={togglePlay}
-          disabled={!audioUrl}
-          title="Play or pause the loaded audio. The red playhead follows along and the view auto-scrolls."
+          disabled={!audioUrl && sortedNotes.length === 0}
+          title={
+            audioUrl
+              ? 'Play or pause the loaded song. The red playhead follows along and the view auto-scrolls.'
+              : 'Play or pause the synthesized melody (each note at its pitch and length). Load a song to play against the real audio instead.'
+          }
         >
-          {isPlaying ? '⏸ Pause' : '▶ Play'}
+          {isPlaying ? '⏸ Pause' : audioUrl ? '▶ Play' : '▶ Play melody'}
         </button>
         <span className="time-readout" title="Current audio playback position, in seconds">
           <span ref={timeLabelRef}>0.00s</span>
