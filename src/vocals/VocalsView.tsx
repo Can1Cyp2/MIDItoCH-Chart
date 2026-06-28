@@ -23,6 +23,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [editorBpm, setEditorBpm] = useState<number | null>(null)
 
   const selectedTrack = useMemo(
     () => parsed?.tracks.find((track) => track.index === selectedTrackIndex) ?? null,
@@ -131,9 +132,14 @@ function VocalsView({ onBack }: VocalsViewProps) {
       setError('Load a melody and map lyrics before exporting.')
       return
     }
+    // If a corrected tempo was chosen in the editor, export the tempo track at
+    // that BPM. Note ticks are unchanged, so their real times scale to match
+    // exactly what the editor plays (real time = ticks/ppq * 60/bpm).
+    const exportTempos =
+      editorBpm && midiBpm != null ? [{ ticks: 0, bpm: editorBpm }] : parsed.tempos
     const data = buildVocalsMidi({
       ppq: parsed.ppq,
-      tempos: parsed.tempos,
+      tempos: exportTempos,
       timeSignatures: parsed.timeSignatures,
       notes,
     })
@@ -305,6 +311,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
               onShift={shiftLyrics}
               midiBpm={midiBpm}
               midiBpmVaries={midiBpmVaries}
+              onEffectiveBpmChange={setEditorBpm}
             />
           )}
         </article>

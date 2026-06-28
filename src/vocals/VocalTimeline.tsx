@@ -17,6 +17,7 @@ interface VocalTimelineProps {
   onShift: (orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later') => void
   midiBpm: number | null
   midiBpmVaries: boolean
+  onEffectiveBpmChange: (bpm: number | null) => void
 }
 
 interface PitchBounds {
@@ -66,7 +67,14 @@ const NotesLayer = memo(function NotesLayer({
   )
 })
 
-function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }: VocalTimelineProps) {
+function VocalTimeline({
+  notes,
+  onChangeLyric,
+  onShift,
+  midiBpm,
+  midiBpmVaries,
+  onEffectiveBpmChange,
+}: VocalTimelineProps) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [pxPerSec, setPxPerSec] = useState(120)
@@ -97,6 +105,17 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
       : bpmSource === 'detected'
         ? detectedBpm ?? customBpm
         : customBpm
+
+  // If the MIDI's stored tempo is wrong, the chosen BPM time-stretches the
+  // melody so it plays (and exports) at the song's real speed.
+  const timeScale =
+    midiBpm && midiBpm > 0 && effectiveBpm && effectiveBpm > 0 ? midiBpm / effectiveBpm : 1
+
+  // Keep the export side (in the parent) in sync with the chosen tempo.
+  useEffect(() => {
+    onEffectiveBpmChange(effectiveBpm && effectiveBpm > 0 ? effectiveBpm : null)
+  }, [effectiveBpm, onEffectiveBpmChange])
+
   // Mutable mirrors so the rAF loop reads current values without re-subscribing.
   const offsetRef = useRef(audioOffset)
   const pxRef = useRef(pxPerSec)
@@ -107,7 +126,12 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
     followRef.current = follow
   })
 
-  const sortedNotes = useMemo(() => [...notes].sort((a, b) => a.time - b.time), [notes])
+  const sortedNotes = useMemo(() => {
+    const base = [...notes].sort((a, b) => a.time - b.time)
+    return timeScale === 1
+      ? base
+      : base.map((n) => ({ ...n, time: n.time * timeScale, duration: n.duration * timeScale }))
+  }, [notes, timeScale])
 
   // Melody synth: lives for the component's lifetime; notes kept in sync.
   useEffect(() => {
@@ -509,9 +533,9 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
       <div className="transport bpm-row">
         <span
           className="ctrl"
-          title="Tempo for the beat grid drawn on the timeline. Needed only if the MIDI's tempo doesn't match the song — otherwise the align offset alone lines things up."
+          title="Playback tempo. If the MIDI's stored tempo is wrong, pick Detected or Custom to time-stretch the melody so it plays — and exports — at the song's real speed. Also drives the beat grid."
         >
-          BPM grid:
+          Tempo:
         </span>
         <button
           type="button"
@@ -551,8 +575,12 @@ function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }
             onChange={(event) => setCustomBpm(Number(event.target.value) || 0)}
           />
         ) : null}
-        <span className="offset-value" title="Tempo currently driving the beat grid">
+        <span
+          className="offset-value"
+          title="Effective playback tempo (drives stretch + beat grid)"
+        >
           = {effectiveBpm ? Math.round(effectiveBpm) : '—'} BPM
+          {timeScale !== 1 ? ` · ${(1 / timeScale).toFixed(2)}× speed` : ''}
         </span>
       </div>
 
