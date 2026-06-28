@@ -205,6 +205,11 @@ function syllableToken(syllable: Syllable): string {
   return syllable.wordEnd ? syllable.text : `${syllable.text}-`
 }
 
+/** Full ordered list of formatted lyric tokens for the given lyrics text. */
+export function lyricTokens(raw: string, autoSplit = true): string[] {
+  return syllabifyLyrics(raw, autoSplit).map(syllableToken)
+}
+
 export interface AlignmentResult {
   notes: VocalNote[]
   /** Formatted tokens that did not fit (more syllables than notes), in order. */

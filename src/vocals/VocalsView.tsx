@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   alignLyricsToNotes,
   buildVocalsMidi,
+  lyricTokens,
   parseVocalMidi,
   syllabifyLyrics,
   type ParsedVocalMidi,
@@ -266,6 +267,48 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
       ),
     )
     setOverflow(nextOverflow)
+  }
+
+  /**
+   * Re-flow the remaining lyrics from `startIndex` to the end. Lyrics already
+   * placed before that note are kept; we count how many real syllables they used
+   * and continue the full lyric list from there, so adding/removing notes that
+   * desynced the mapping can be fixed by selecting where it's still correct.
+   */
+  function fillRestFromHere(orderedIds: string[], startIndex: number): void {
+    if (orderedIds.length === 0) {
+      return
+    }
+    const start = Math.max(0, startIndex)
+    record('fill')
+    const tokens = lyricTokens(lyrics, autoSyllabify)
+    const lyricById = new Map(notes.map((n) => [n.id, n.lyric]))
+
+    let placedBefore = 0
+    for (let i = 0; i < start; i += 1) {
+      const l = (lyricById.get(orderedIds[i]) ?? '').trim()
+      if (l && l !== '+') {
+        placedBefore += 1
+      }
+    }
+
+    const newLyrics = orderedIds.map((id, i) => (i < start ? lyricById.get(id) ?? '' : ''))
+    let token = placedBefore
+    for (let i = start; i < orderedIds.length; i += 1) {
+      newLyrics[i] = token < tokens.length ? tokens[token] : ''
+      token += 1
+    }
+
+    const shifted = new Map(orderedIds.map((id, i) => [id, newLyrics[i]]))
+    setNotes((prev) =>
+      prev.map((note) =>
+        shifted.has(note.id) ? { ...note, lyric: shifted.get(note.id) ?? '' } : note,
+      ),
+    )
+    setOverflow(tokens.slice(token))
+    setStatus(
+      `Filled ${Math.max(0, tokens.length - placedBefore)} remaining syllable(s) from the selected point onward.`,
+    )
   }
 
   function updateNote(id: string, patch: { time?: number; duration?: number; midi?: number }): void {
@@ -580,6 +623,7 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
                 notes={notes}
                 onChangeLyric={updateNoteLyric}
                 onShift={shiftLyrics}
+                onFillRest={fillRestFromHere}
                 onMergeNext={mergeNext}
                 onUpdateNote={updateNote}
                 onAddNote={addNote}

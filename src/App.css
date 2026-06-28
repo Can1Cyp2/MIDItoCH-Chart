@@ -1045,6 +1045,10 @@ textarea {
   flex-wrap: wrap;
 }
 
+.fill-rest-btn {
+  margin-left: auto;
+}
+
 .shift-label {
   font-size: 0.85rem;
   color: #b9d6ff;

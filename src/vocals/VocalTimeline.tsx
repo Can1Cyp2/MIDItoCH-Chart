@@ -15,6 +15,7 @@ interface VocalTimelineProps {
   notes: VocalNote[]
   onChangeLyric: (id: string, lyric: string) => void
   onShift: (orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later') => void
+  onFillRest: (orderedIds: string[], fromIndex: number) => void
   onMergeNext: (orderedIds: string[], index: number) => void
   onUpdateNote: (id: string, patch: { time?: number; duration?: number; midi?: number }) => void
   onAddNote: (time: number, midi: number) => void
@@ -97,6 +98,7 @@ function VocalTimeline({
   notes,
   onChangeLyric,
   onShift,
+  onFillRest,
   onMergeNext,
   onUpdateNote,
   onAddNote,
@@ -632,6 +634,26 @@ function VocalTimeline({
     )
   }
 
+  function fillRest(): void {
+    if (sortedNotes.length === 0) {
+      return
+    }
+    onFillRest(
+      sortedNotes.map((n) => n.id),
+      selectedIndex >= 0 ? selectedIndex : 0,
+    )
+  }
+
+  function deleteSelected(): void {
+    if (!selectedNote) {
+      return
+    }
+    // Move selection to a neighbor so arrow nav continues from here, not the start.
+    const neighbor = sortedNotes[selectedIndex + 1] ?? sortedNotes[selectedIndex - 1] ?? null
+    setSelectedId(neighbor ? neighbor.id : null)
+    onDeleteNote(selectedNote.id)
+  }
+
   const rulerMarks = useMemo(() => {
     const stepSeconds = pxPerSec < 50 ? 5 : pxPerSec < 110 ? 2 : 1
     const marks: number[] = []
@@ -1024,8 +1046,8 @@ function VocalTimeline({
           type="button"
           className="mini-btn wide"
           disabled={!selectedNote}
-          title="Delete the selected note"
-          onClick={() => selectedNote && onDeleteNote(selectedNote.id)}
+          title="Delete the selected note (selection moves to the next note)"
+          onClick={deleteSelected}
         >
           🗑 delete
         </button>
@@ -1086,6 +1108,16 @@ function VocalTimeline({
             onClick={() => shift('later')}
           >
             move lyrics later →
+          </button>
+
+          <button
+            type="button"
+            className="primary-btn fill-rest-btn"
+            disabled={sortedNotes.length === 0}
+            title="Re-flow the rest of the lyrics from the selected note to the end. Keeps earlier lyrics and continues from where they left off — select the note where the lyrics are still correct, then click. With nothing selected it fills from the start."
+            onClick={fillRest}
+          >
+            ⤓ fill rest of lyrics from here
           </button>
         </div>
       </div>
