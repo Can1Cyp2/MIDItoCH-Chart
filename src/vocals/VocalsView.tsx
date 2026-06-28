@@ -269,31 +269,25 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
     setOverflow(nextOverflow)
   }
 
+  const lyricTokenList = useMemo(() => lyricTokens(lyrics, autoSyllabify), [lyrics, autoSyllabify])
+
   /**
-   * Re-flow the remaining lyrics from `startIndex` to the end. Lyrics already
-   * placed before that note are kept; we count how many real syllables they used
-   * and continue the full lyric list from there, so adding/removing notes that
-   * desynced the mapping can be fixed by selecting where it's still correct.
+   * Re-flow lyrics from `startIndex` (a note) to the end, beginning at
+   * `resumeToken` in the full lyric list. Lyrics on notes before startIndex are
+   * kept; everything after is re-laid from resumeToken onward. The timeline
+   * decides resumeToken (auto-guess or the user's picker choice).
    */
-  function fillRestFromHere(orderedIds: string[], startIndex: number): void {
+  function fillRestFromHere(orderedIds: string[], startIndex: number, resumeToken: number): void {
     if (orderedIds.length === 0) {
       return
     }
     const start = Math.max(0, startIndex)
     record('fill')
-    const tokens = lyricTokens(lyrics, autoSyllabify)
+    const tokens = lyricTokenList
     const lyricById = new Map(notes.map((n) => [n.id, n.lyric]))
 
-    let placedBefore = 0
-    for (let i = 0; i < start; i += 1) {
-      const l = (lyricById.get(orderedIds[i]) ?? '').trim()
-      if (l && l !== '+') {
-        placedBefore += 1
-      }
-    }
-
     const newLyrics = orderedIds.map((id, i) => (i < start ? lyricById.get(id) ?? '' : ''))
-    let token = placedBefore
+    let token = Math.max(0, Math.min(resumeToken, tokens.length))
     for (let i = start; i < orderedIds.length; i += 1) {
       newLyrics[i] = token < tokens.length ? tokens[token] : ''
       token += 1
@@ -306,9 +300,8 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
       ),
     )
     setOverflow(tokens.slice(token))
-    setStatus(
-      `Filled ${Math.max(0, tokens.length - placedBefore)} remaining syllable(s) from the selected point onward.`,
-    )
+    const startWord = tokens[Math.max(0, Math.min(resumeToken, tokens.length))] ?? '(none)'
+    setStatus(`Filled lyrics from "${startWord}" onward across the rest of the notes.`)
   }
 
   function updateNote(id: string, patch: { time?: number; duration?: number; midi?: number }): void {
@@ -624,6 +617,7 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
                 onChangeLyric={updateNoteLyric}
                 onShift={shiftLyrics}
                 onFillRest={fillRestFromHere}
+                lyricTokenList={lyricTokenList}
                 onMergeNext={mergeNext}
                 onUpdateNote={updateNote}
                 onAddNote={addNote}

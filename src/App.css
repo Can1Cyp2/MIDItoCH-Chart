@@ -1045,8 +1045,23 @@ textarea {
   flex-wrap: wrap;
 }
 
-.fill-rest-btn {
+.fill-rest-group {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid rgba(255, 231, 153, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 159, 28, 0.08);
+}
+
+.resume-word {
+  min-width: 4rem;
+  text-align: center;
+  font-weight: 700;
+  color: #ffe9ad;
+  font-variant-numeric: tabular-nums;
 }
 
 .shift-label {

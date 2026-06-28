@@ -15,7 +15,8 @@ interface VocalTimelineProps {
   notes: VocalNote[]
   onChangeLyric: (id: string, lyric: string) => void
   onShift: (orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later') => void
-  onFillRest: (orderedIds: string[], fromIndex: number) => void
+  onFillRest: (orderedIds: string[], fromIndex: number, resumeToken: number) => void
+  lyricTokenList: string[]
   onMergeNext: (orderedIds: string[], index: number) => void
   onUpdateNote: (id: string, patch: { time?: number; duration?: number; midi?: number }) => void
   onAddNote: (time: number, midi: number) => void
@@ -99,6 +100,7 @@ function VocalTimeline({
   onChangeLyric,
   onShift,
   onFillRest,
+  lyricTokenList,
   onMergeNext,
   onUpdateNote,
   onAddNote,
@@ -125,6 +127,7 @@ function VocalTimeline({
   const [draft, setDraft] = useState('')
   const [songVolume, setSongVolume] = useState(1)
   const [midiVolume, setMidiVolume] = useState(0.9)
+  const [resumeOffset, setResumeOffset] = useState(0)
   const [peaks, setPeaks] = useState<WavePeaks | null>(null)
   const [detectedBpm, setDetectedBpm] = useState<number | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -287,7 +290,10 @@ function VocalTimeline({
   const totalSeconds = Math.max(lastNoteEnd, audioDuration) + 4
   const contentWidth = totalSeconds * pxPerSec
 
-  const selectNote = useCallback((id: string) => setSelectedId(id), [])
+  const selectNote = useCallback((id: string) => {
+    setSelectedId(id)
+    setResumeOffset(0)
+  }, [])
 
   // Begin a note drag; origin values are read from the canonical (unscaled) notes.
   const onNotePointerDown = useCallback(
@@ -321,6 +327,32 @@ function VocalTimeline({
 
   const selectedIndex = sortedNotes.findIndex((n) => n.id === selectedId)
   const selectedNote = selectedIndex >= 0 ? sortedNotes[selectedIndex] : null
+
+  // Best guess for where in the lyric list the selected note belongs: count the
+  // real syllables placed before it, then, if the note already has a word, snap
+  // to the nearest matching token so a correct anchor word re-syncs the resume.
+  const autoResumeIndex = useMemo(() => {
+    const start = selectedIndex >= 0 ? selectedIndex : 0
+    let count = 0
+    for (let i = 0; i < start; i += 1) {
+      const l = sortedNotes[i].lyric.trim()
+      if (l && l !== '+') count += 1
+    }
+    const anchor = selectedNote?.lyric.trim()
+    if (anchor && anchor !== '+') {
+      let best = -1
+      for (let i = 0; i < lyricTokenList.length; i += 1) {
+        if (lyricTokenList[i] === anchor && (best < 0 || Math.abs(i - count) < Math.abs(best - count))) {
+          best = i
+        }
+      }
+      if (best >= 0) return best
+    }
+    return Math.min(count, lyricTokenList.length)
+  }, [sortedNotes, selectedIndex, selectedNote, lyricTokenList])
+
+  // Effective resume point = auto guess + the user's manual nudge (picker).
+  const resumeIndex = Math.max(0, Math.min(lyricTokenList.length, autoResumeIndex + resumeOffset))
 
   // Position the playhead, time readout, and (optionally) selection each frame.
   // The clock is the audio element when a song is loaded, otherwise the synth.
@@ -603,6 +635,7 @@ function VocalTimeline({
     const next = Math.min(sortedNotes.length - 1, Math.max(0, base + delta))
     const note = sortedNotes[next]
     setSelectedId(note.id)
+    setResumeOffset(0)
     // Move the playhead to the note's start.
     const audio = audioRef.current
     if (audio) {
@@ -641,6 +674,7 @@ function VocalTimeline({
     onFillRest(
       sortedNotes.map((n) => n.id),
       selectedIndex >= 0 ? selectedIndex : 0,
+      resumeIndex,
     )
   }
 
@@ -1110,15 +1144,48 @@ function VocalTimeline({
             move lyrics later →
           </button>
 
-          <button
-            type="button"
-            className="primary-btn fill-rest-btn"
-            disabled={sortedNotes.length === 0}
-            title="Re-flow the rest of the lyrics from the selected note to the end. Keeps earlier lyrics and continues from where they left off — select the note where the lyrics are still correct, then click. With nothing selected it fills from the start."
-            onClick={fillRest}
-          >
-            ⤓ fill rest of lyrics from here
-          </button>
+          <div className="fill-rest-group">
+            <span className="shift-label">Resume at:</span>
+            <button
+              type="button"
+              className="mini-btn"
+              disabled={lyricTokenList.length === 0}
+              title="Pick an earlier word in the lyrics to resume from"
+              onClick={() => setResumeOffset((o) => o - 1)}
+            >
+              ‹
+            </button>
+            <span className="resume-word" title="The word that will land on the selected note">
+              {lyricTokenList[resumeIndex] ?? '(end)'}
+            </span>
+            <button
+              type="button"
+              className="mini-btn"
+              disabled={lyricTokenList.length === 0}
+              title="Pick a later word in the lyrics to resume from"
+              onClick={() => setResumeOffset((o) => o + 1)}
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              className="mini-btn"
+              disabled={resumeOffset === 0}
+              title="Reset to the auto-detected resume word"
+              onClick={() => setResumeOffset(0)}
+            >
+              ↺ auto
+            </button>
+            <button
+              type="button"
+              className="primary-btn"
+              disabled={sortedNotes.length === 0}
+              title="Re-flow the lyrics from the word shown above across the selected note and every note after it. Keeps earlier lyrics. Select the note where it should resume; auto guesses the word, the arrows let you choose."
+              onClick={fillRest}
+            >
+              ⤓ fill rest from here
+            </button>
+          </div>
         </div>
       </div>
 
