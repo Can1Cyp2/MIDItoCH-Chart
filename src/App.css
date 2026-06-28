@@ -902,6 +902,48 @@ textarea {
   z-index: 3;
 }
 
+.tl-note.non-pitched {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(200, 200, 210, 0.85),
+    rgba(200, 200, 210, 0.85) 4px,
+    rgba(150, 150, 165, 0.85) 4px,
+    rgba(150, 150, 165, 0.85) 8px
+  );
+}
+
+.tl-note-resize {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0.35);
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+}
+
+.note-tools {
+  flex-wrap: wrap;
+}
+
+.volume-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.volume-group input[type='range'] {
+  width: 80px;
+}
+
+.export-row {
+  margin-top: 1rem;
+  align-items: center;
+}
+
 .tl-note-label {
   pointer-events: none;
 }

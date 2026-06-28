@@ -29,6 +29,8 @@ const PEAK_GAIN = 0.16
 
 export class MelodySynth {
   private ctx: AudioContext | null = null
+  private master: GainNode | null = null
+  private volume = 0.9
   private notes: SynthNote[] = []
   private endPos = 0
 
@@ -72,8 +74,18 @@ export class MelodySynth {
         return null
       }
       this.ctx = new Ctor()
+      this.master = this.ctx.createGain()
+      this.master.gain.value = this.volume
+      this.master.connect(this.ctx.destination)
     }
     return this.ctx
+  }
+
+  setVolume(value: number): void {
+    this.volume = Math.max(0, Math.min(1, value))
+    if (this.master) {
+      this.master.gain.value = this.volume
+    }
   }
 
   private firstIndexAtOrAfter(pos: number): number {
@@ -158,7 +170,7 @@ export class MelodySynth {
     gain.gain.linearRampToValueAtTime(0, when + duration)
 
     osc.connect(gain)
-    gain.connect(ctx.destination)
+    gain.connect(this.master ?? ctx.destination)
     osc.start(when)
     osc.stop(when + duration + 0.02)
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   alignLyricsToNotes,
   buildVocalsMidi,
@@ -24,18 +24,50 @@ function VocalsView({ onBack }: VocalsViewProps) {
   const [error, setError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [editorBpm, setEditorBpm] = useState<number | null>(null)
+  const [autoSyllabify, setAutoSyllabify] = useState(true)
+  // Tokens that didn't fit on a note; flow back in when notes are pulled earlier.
+  const [overflow, setOverflow] = useState<string[]>([])
+  const sawDashRef = useRef(false)
+
+  // Once a dash appears in the lyrics, switch off auto-syllabify and respect the
+  // user's manual dashes (they can turn it back on). Handled here, not in an
+  // effect, so it only reacts to actual edits.
+  function onLyricsChange(value: string): void {
+    setLyrics(value)
+    const hasDash = value.includes('-')
+    if (hasDash && !sawDashRef.current) {
+      setAutoSyllabify(false)
+    }
+    sawDashRef.current = hasDash
+  }
+
+  const midiBpm = parsed?.tempos[0]?.bpm ?? null
+  const midiBpmVaries =
+    (parsed?.tempos.length ?? 0) > 1 &&
+    new Set(parsed?.tempos.map((t) => Math.round(t.bpm))).size > 1
+
+  const ticksPerSecond = parsed ? (parsed.ppq * (midiBpm ?? 120)) / 60 : 480
+
+  function withTicks(note: VocalNote, time: number, duration: number, midi: number): VocalNote {
+    return {
+      ...note,
+      time,
+      duration,
+      midi,
+      ticks: Math.max(0, Math.round(time * ticksPerSecond)),
+      durationTicks: Math.max(1, Math.round(duration * ticksPerSecond)),
+    }
+  }
 
   const selectedTrack = useMemo(
     () => parsed?.tracks.find((track) => track.index === selectedTrackIndex) ?? null,
     [parsed, selectedTrackIndex],
   )
 
-  const syllableCount = useMemo(() => syllabifyLyrics(lyrics).length, [lyrics])
-
-  const midiBpm = parsed?.tempos[0]?.bpm ?? null
-  const midiBpmVaries =
-    (parsed?.tempos.length ?? 0) > 1 &&
-    new Set(parsed?.tempos.map((t) => Math.round(t.bpm))).size > 1
+  const syllableCount = useMemo(
+    () => syllabifyLyrics(lyrics, autoSyllabify).length,
+    [lyrics, autoSyllabify],
+  )
 
   async function onMidiPicked(file: File | null): Promise<void> {
     setError(null)
@@ -55,6 +87,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
       setParsed(result)
       setSelectedTrackIndex(richest.index)
       setNotes(richest.notes.map((note) => ({ ...note })))
+      setOverflow([])
       setStatus(`Loaded ${result.fileName}: ${richest.noteCount} notes from "${richest.name}".`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not parse that MIDI file.')
@@ -71,6 +104,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
     }
     setSelectedTrackIndex(index)
     setNotes(track.notes.map((note) => ({ ...note })))
+    setOverflow([])
     setStatus(`Selected "${track.name}": ${track.noteCount} notes.`)
   }
 
@@ -80,20 +114,21 @@ function VocalsView({ onBack }: VocalsViewProps) {
       setError('Load a vocal melody MIDI first.')
       return
     }
-    const syllables = syllabifyLyrics(lyrics)
+    const syllables = syllabifyLyrics(lyrics, autoSyllabify)
     if (syllables.length === 0) {
       setError('Paste some lyrics to map onto the melody.')
       return
     }
     const result = alignLyricsToNotes(notes, syllables)
     setNotes(result.notes)
+    setOverflow(result.leftoverTokens)
     const bits: string[] = [`Mapped ${syllables.length} syllables onto ${notes.length} notes.`]
     if (result.slideNotes > 0) {
       bits.push(`${result.slideNotes} extra note(s) marked as "+" slides.`)
     }
-    if (result.leftoverSyllables > 0) {
+    if (result.leftoverTokens.length > 0) {
       bits.push(
-        `${result.leftoverSyllables} syllable(s) had no note — split a note or add notes, then fix manually.`,
+        `${result.leftoverTokens.length} leftover syllable(s) held in reserve — they flow in as you pull lyrics earlier.`,
       )
     }
     setStatus(bits.join(' '))
@@ -106,24 +141,107 @@ function VocalsView({ onBack }: VocalsViewProps) {
   /**
    * Re-seat lyric tokens across notes from `fromIndex` onward (in the given
    * timeline order). 'later' inserts a blank at fromIndex (pushing lyrics to
-   * later notes); 'earlier' removes fromIndex's lyric (pulling them back).
+   * later notes; the bumped tail token goes back to the overflow reserve).
+   * 'earlier' removes fromIndex's lyric (pulling them back; the freed end slot
+   * is filled from the overflow reserve if any leftover lyrics remain).
    */
   function shiftLyrics(orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later'): void {
-    setNotes((prev) => {
-      const lyricById = new Map(prev.map((note) => [note.id, note.lyric]))
-      const lyrics = orderedIds.map((id) => lyricById.get(id) ?? '')
-      if (direction === 'later') {
-        lyrics.splice(fromIndex, 0, '')
-        lyrics.pop()
-      } else {
-        lyrics.splice(fromIndex, 1)
-        lyrics.push('')
+    const lyricById = new Map(notes.map((note) => [note.id, note.lyric]))
+    const lyrics = orderedIds.map((id) => lyricById.get(id) ?? '')
+    let nextOverflow = [...overflow]
+
+    if (direction === 'later') {
+      lyrics.splice(fromIndex, 0, '')
+      const bumped = lyrics.pop() ?? ''
+      if (bumped.trim()) {
+        nextOverflow = [bumped, ...nextOverflow]
       }
-      const shifted = new Map(orderedIds.map((id, index) => [id, lyrics[index]]))
-      return prev.map((note) =>
+    } else {
+      lyrics.splice(fromIndex, 1)
+      const refill = nextOverflow.length > 0 ? nextOverflow.shift() ?? '' : ''
+      lyrics.push(refill)
+    }
+
+    const shifted = new Map(orderedIds.map((id, index) => [id, lyrics[index]]))
+    setNotes((prev) =>
+      prev.map((note) =>
         shifted.has(note.id) ? { ...note, lyric: shifted.get(note.id) ?? '' } : note,
+      ),
+    )
+    setOverflow(nextOverflow)
+  }
+
+  function updateNote(id: string, patch: { time?: number; duration?: number; midi?: number }): void {
+    setNotes((prev) =>
+      prev
+        .map((note) =>
+          note.id === id
+            ? withTicks(
+                note,
+                Math.max(0, patch.time ?? note.time),
+                Math.max(0.05, patch.duration ?? note.duration),
+                Math.min(108, Math.max(0, patch.midi ?? note.midi)),
+              )
+            : note,
+        )
+        .sort((a, b) => a.time - b.time),
+    )
+  }
+
+  function addNote(time: number, midi: number): void {
+    const id = `add-${Date.now()}-${Math.round(Math.random() * 1e6)}`
+    const base: VocalNote = { id, ticks: 0, durationTicks: 1, time: 0, duration: 0, midi, lyric: '' }
+    setNotes((prev) =>
+      [...prev, withTicks(base, Math.max(0, time), 0.3, midi)].sort((a, b) => a.time - b.time),
+    )
+  }
+
+  function deleteNote(id: string): void {
+    setNotes((prev) => prev.filter((note) => note.id !== id))
+  }
+
+  function splitNote(id: string): void {
+    setNotes((prev) => {
+      const note = prev.find((n) => n.id === id)
+      if (!note) {
+        return prev
+      }
+      const half = note.duration / 2
+      const first = withTicks(note, note.time, half, note.midi)
+      const second = withTicks(
+        { ...note, id: `split-${Date.now()}-${Math.round(Math.random() * 1e6)}`, lyric: '' },
+        note.time + half,
+        half,
+        note.midi,
       )
+      return prev.flatMap((n) => (n.id === id ? [first, second] : [n])).sort((a, b) => a.time - b.time)
     })
+  }
+
+  /** Merge the next note's lyric onto a hyphenated note, pulling the rest back. */
+  function mergeNext(orderedIds: string[], index: number): void {
+    if (!orderedIds[index]) {
+      return
+    }
+    const lyricById = new Map(notes.map((n) => [n.id, n.lyric]))
+    const lyrics = orderedIds.map((id) => lyricById.get(id) ?? '')
+    const cur = (lyrics[index] ?? '').replace(/-+$/, '')
+    const next = lyrics[index + 1] ?? ''
+    lyrics[index] = `${cur}${next}`
+
+    const nextOverflow = [...overflow]
+    if (index + 1 < lyrics.length) {
+      lyrics.splice(index + 1, 1)
+      lyrics.push(nextOverflow.length > 0 ? nextOverflow.shift() ?? '' : '')
+    }
+
+    const shifted = new Map(orderedIds.map((id, i) => [id, lyrics[i]]))
+    setNotes((prev) =>
+      prev.map((note) =>
+        shifted.has(note.id) ? { ...note, lyric: shifted.get(note.id) ?? '' } : note,
+      ),
+    )
+    setOverflow(nextOverflow)
   }
 
   function onExport(): void {
@@ -248,10 +366,22 @@ function VocalsView({ onBack }: VocalsViewProps) {
             rows={8}
             placeholder={'Never gonna give you up\nNever gonna let you down'}
             value={lyrics}
-            onChange={(event) => setLyrics(event.target.value)}
+            onChange={(event) => onLyricsChange(event.target.value)}
           />
+          <label
+            className="toggle-row"
+            title="On: automatically split words into syllables. Off: keep each word whole. Turns off automatically once you type a dash, so your manual hyphens are respected."
+          >
+            <input
+              type="checkbox"
+              checked={autoSyllabify}
+              onChange={(event) => setAutoSyllabify(event.target.checked)}
+            />
+            Auto-split words into syllables
+          </label>
           <p className="meta-row">
             {syllableCount} syllable(s) · {selectedTrack?.noteCount ?? 0} melody note(s)
+            {overflow.length > 0 ? ` · ${overflow.length} in reserve` : ''}
           </p>
 
           <div className="button-row">
@@ -305,14 +435,32 @@ function VocalsView({ onBack }: VocalsViewProps) {
           {notes.length === 0 ? (
             <p className="meta-row">Load a melody MIDI above to start editing notes.</p>
           ) : (
-            <VocalTimeline
-              notes={notes}
-              onChangeLyric={updateNoteLyric}
-              onShift={shiftLyrics}
-              midiBpm={midiBpm}
-              midiBpmVaries={midiBpmVaries}
-              onEffectiveBpmChange={setEditorBpm}
-            />
+            <>
+              <VocalTimeline
+                notes={notes}
+                onChangeLyric={updateNoteLyric}
+                onShift={shiftLyrics}
+                onMergeNext={mergeNext}
+                onUpdateNote={updateNote}
+                onAddNote={addNote}
+                onDeleteNote={deleteNote}
+                onSplitNote={splitNote}
+                midiBpm={midiBpm}
+                midiBpmVaries={midiBpmVaries}
+                onEffectiveBpmChange={setEditorBpm}
+              />
+              <div className="button-row export-row">
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={onExport}
+                  title="Download the finished PART VOCALS .mid with your edits and tempo"
+                >
+                  Export PART VOCALS .mid
+                </button>
+                {status ? <span className="meta-row">{status}</span> : null}
+              </div>
+            </>
           )}
         </article>
       </section>

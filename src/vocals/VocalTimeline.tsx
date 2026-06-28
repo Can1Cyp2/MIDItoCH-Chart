@@ -15,6 +15,11 @@ interface VocalTimelineProps {
   notes: VocalNote[]
   onChangeLyric: (id: string, lyric: string) => void
   onShift: (orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later') => void
+  onMergeNext: (orderedIds: string[], index: number) => void
+  onUpdateNote: (id: string, patch: { time?: number; duration?: number; midi?: number }) => void
+  onAddNote: (time: number, midi: number) => void
+  onDeleteNote: (id: string) => void
+  onSplitNote: (id: string) => void
   midiBpm: number | null
   midiBpmVaries: boolean
   onEffectiveBpmChange: (bpm: number | null) => void
@@ -33,12 +38,14 @@ const NotesLayer = memo(function NotesLayer({
   bounds,
   selectedId,
   onSelect,
+  onPointerDown,
 }: {
   notes: VocalNote[]
   pxPerSec: number
   bounds: PitchBounds
   selectedId: string | null
   onSelect: (id: string) => void
+  onPointerDown: (id: string, clientX: number, clientY: number, mode: 'move' | 'resize') => void
 }) {
   return (
     <>
@@ -47,19 +54,33 @@ const NotesLayer = memo(function NotesLayer({
         const width = Math.max(MIN_NOTE_WIDTH, note.duration * pxPerSec)
         const top = (bounds.max - note.midi) * LANE_HEIGHT + RULER_HEIGHT
         const isSelected = note.id === selectedId
+        const nonPitched = note.lyric.includes('#')
         return (
           <button
             type="button"
             key={note.id}
-            className={`tl-note ${isSelected ? 'selected' : ''} ${note.lyric.trim() ? 'has-lyric' : ''}`}
+            className={`tl-note ${isSelected ? 'selected' : ''} ${note.lyric.trim() ? 'has-lyric' : ''} ${nonPitched ? 'non-pitched' : ''}`}
             style={{ left, width, top, height: LANE_HEIGHT - 2 }}
-            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — click to select and edit`}
+            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — drag to move (up/down = pitch), drag the right edge to resize`}
             onClick={(event) => {
               event.stopPropagation()
               onSelect(note.id)
             }}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onPointerDown(note.id, event.clientX, event.clientY, 'move')
+            }}
           >
             <span className="tl-note-label">{midiToNoteName(note.midi)}</span>
+            <span
+              className="tl-note-resize"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onPointerDown(note.id, event.clientX, event.clientY, 'resize')
+              }}
+            />
           </button>
         )
       })}
@@ -71,6 +92,11 @@ function VocalTimeline({
   notes,
   onChangeLyric,
   onShift,
+  onMergeNext,
+  onUpdateNote,
+  onAddNote,
+  onDeleteNote,
+  onSplitNote,
   midiBpm,
   midiBpmVaries,
   onEffectiveBpmChange,
@@ -85,6 +111,8 @@ function VocalTimeline({
   const [audioDuration, setAudioDuration] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [songVolume, setSongVolume] = useState(1)
+  const [midiVolume, setMidiVolume] = useState(0.9)
   const [peaks, setPeaks] = useState<WavePeaks | null>(null)
   const [detectedBpm, setDetectedBpm] = useState<number | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -98,6 +126,13 @@ function VocalTimeline({
   const waveRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const synthRef = useRef<MelodySynth | null>(null)
+  const dragRef = useRef<
+    | null
+    | { id: string; mode: 'move' | 'resize'; startX: number; startY: number; time: number; duration: number; midi: number }
+  >(null)
+  const onUpdateNoteRef = useRef(onUpdateNote)
+  const timeScaleRef = useRef(1)
+  const togglePlayRef = useRef<() => void>(() => {})
 
   const effectiveBpm =
     bpmSource === 'midi'
@@ -124,7 +159,69 @@ function VocalTimeline({
     offsetRef.current = audioOffset
     pxRef.current = pxPerSec
     followRef.current = follow
+    onUpdateNoteRef.current = onUpdateNote
+    timeScaleRef.current = timeScale
+    togglePlayRef.current = togglePlay
   })
+
+  // Drag to move/resize notes. Listeners stay mounted and no-op unless dragging.
+  useEffect(() => {
+    function move(event: MouseEvent) {
+      const drag = dragRef.current
+      if (!drag) {
+        return
+      }
+      const scale = pxRef.current * timeScaleRef.current
+      if (scale <= 0) {
+        return
+      }
+      const dt = (event.clientX - drag.startX) / scale
+      if (drag.mode === 'move') {
+        const dSemi = -Math.round((event.clientY - drag.startY) / LANE_HEIGHT)
+        onUpdateNoteRef.current(drag.id, { time: Math.max(0, drag.time + dt), midi: drag.midi + dSemi })
+      } else {
+        onUpdateNoteRef.current(drag.id, { duration: Math.max(0.05, drag.duration + dt) })
+      }
+    }
+    function up() {
+      dragRef.current = null
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+    return () => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+  }, [])
+
+  // Spacebar toggles play (unless typing in a field).
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.code !== 'Space') {
+        return
+      }
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
+        return
+      }
+      event.preventDefault()
+      togglePlayRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Apply volumes.
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = songVolume
+    }
+  }, [songVolume, audioUrl])
+
+  useEffect(() => {
+    synthRef.current?.setVolume(midiVolume)
+  }, [midiVolume])
 
   const sortedNotes = useMemo(() => {
     const base = [...notes].sort((a, b) => a.time - b.time)
@@ -168,6 +265,36 @@ function VocalTimeline({
   const contentWidth = totalSeconds * pxPerSec
 
   const selectNote = useCallback((id: string) => setSelectedId(id), [])
+
+  // Begin a note drag; origin values are read from the canonical (unscaled) notes.
+  const onNotePointerDown = useCallback(
+    (id: string, clientX: number, clientY: number, mode: 'move' | 'resize') => {
+      const note = notes.find((n) => n.id === id)
+      if (!note) {
+        return
+      }
+      dragRef.current = {
+        id,
+        mode,
+        startX: clientX,
+        startY: clientY,
+        time: note.time,
+        duration: note.duration,
+        midi: note.midi,
+      }
+      setSelectedId(id)
+    },
+    [notes],
+  )
+
+  /** Current playhead position in (scaled) melody seconds. */
+  function getMelodyTime(): number {
+    const audio = audioRef.current
+    if (audio) {
+      return Math.max(0, audio.currentTime - audioOffset)
+    }
+    return synthRef.current?.getTime() ?? 0
+  }
 
   const selectedIndex = sortedNotes.findIndex((n) => n.id === selectedId)
   const selectedNote = selectedIndex >= 0 ? sortedNotes[selectedIndex] : null
@@ -353,6 +480,21 @@ function VocalTimeline({
       synth.play()
       setIsPlaying(true)
     }
+  }
+
+  // Note add/delete/split/resize operate in canonical (unscaled) seconds.
+  const scaleDown = (displaySeconds: number) => (timeScale > 0 ? displaySeconds / timeScale : displaySeconds)
+
+  function addNoteAtPlayhead(): void {
+    const midi = selectedNote?.midi ?? Math.round((bounds.min + bounds.max) / 2)
+    onAddNote(scaleDown(getMelodyTime()), midi)
+  }
+
+  function nudgeDuration(deltaSeconds: number): void {
+    if (!selectedNote) {
+      return
+    }
+    onUpdateNote(selectedNote.id, { duration: scaleDown(selectedNote.duration) + deltaSeconds })
   }
 
   function onTimelineClick(event: React.MouseEvent<HTMLDivElement>): void {
@@ -582,6 +724,35 @@ function VocalTimeline({
           = {effectiveBpm ? Math.round(effectiveBpm) : '—'} BPM
           {timeScale !== 1 ? ` · ${(1 / timeScale).toFixed(2)}× speed` : ''}
         </span>
+
+        <div className="volume-group">
+          <label className="ctrl" title="Volume of the synthesized melody notes">
+            🎹
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={midiVolume}
+              onChange={(event) => setMidiVolume(Number(event.target.value))}
+            />
+          </label>
+          <label
+            className="ctrl"
+            title={audioUrl ? 'Volume of the loaded song audio' : 'Load a song to set its volume'}
+          >
+            🎵
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={songVolume}
+              disabled={!audioUrl}
+              onChange={(event) => setSongVolume(Number(event.target.value))}
+            />
+          </label>
+        </div>
       </div>
 
       {audioUrl ? (
@@ -613,6 +784,7 @@ function VocalTimeline({
             bounds={bounds}
             selectedId={selectedId}
             onSelect={selectNote}
+            onPointerDown={onNotePointerDown}
           />
           <div
             className="tl-lyric-lane"
@@ -718,10 +890,82 @@ function VocalTimeline({
           type="button"
           className="mini-btn"
           disabled={!selectedNote}
+          title="Toggle '#' — a non-pitched (talky / distorted, not a real sung pitch) note"
+          onClick={() => applyToSelected((l) => (l.includes('#') ? l.replace(/#/g, '') : `${l}#`))}
+        >
+          #
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={!selectedNote || !selectedNote.lyric.trim().endsWith('-')}
+          title="Merge the next note's word onto this hyphenated note, then pull the rest of the lyrics back one note"
+          onClick={() =>
+            onMergeNext(
+              sortedNotes.map((n) => n.id),
+              selectedIndex,
+            )
+          }
+        >
+          ↩ merge next
+        </button>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!selectedNote}
           title="Select the next note"
           onClick={() => step(1)}
         >
           ▶
+        </button>
+      </div>
+
+      <div className="note-editor note-tools">
+        <span className="shift-label">Notes:</span>
+        <button
+          type="button"
+          className="mini-btn wide"
+          title="Add a new note at the playhead (uses the selected note's pitch)"
+          onClick={addNoteAtPlayhead}
+        >
+          ＋ add
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={!selectedNote}
+          title="Delete the selected note"
+          onClick={() => selectedNote && onDeleteNote(selectedNote.id)}
+        >
+          🗑 delete
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={!selectedNote}
+          title="Split the selected note into two halves"
+          onClick={() => selectedNote && onSplitNote(selectedNote.id)}
+        >
+          ✂ split
+        </button>
+        <span className="shift-label">Length:</span>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!selectedNote}
+          title="Make the selected note shorter (0.1s)"
+          onClick={() => nudgeDuration(-0.1)}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          className="mini-btn"
+          disabled={!selectedNote}
+          title="Make the selected note longer (0.1s)"
+          onClick={() => nudgeDuration(0.1)}
+        >
+          +
         </button>
       </div>
 

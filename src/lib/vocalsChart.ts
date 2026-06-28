@@ -107,10 +107,15 @@ interface Syllable {
 const VOWELS = 'aeiouy'
 
 /** Heuristic English syllable split for a single word (no whitespace). */
-function syllabifyWord(word: string): string[] {
+function syllabifyWord(word: string, autoSplit: boolean): string[] {
   // Respect explicit hyphenation the user typed, e.g. "hel-lo".
   if (word.includes('-')) {
     return word.split('-').filter(Boolean)
+  }
+
+  // Auto-splitting off: keep each word as a single syllable.
+  if (!autoSplit) {
+    return [word]
   }
 
   const lower = word.toLowerCase()
@@ -159,8 +164,11 @@ function syllabifyWord(word: string): string[] {
   return parts.filter(Boolean)
 }
 
-/** Turn pasted plain lyrics into an ordered syllable list with phrase info. */
-export function syllabifyLyrics(raw: string): Syllable[] {
+/**
+ * Turn pasted plain lyrics into an ordered syllable list with phrase info.
+ * When `autoSplit` is false, words are kept whole unless the user typed dashes.
+ */
+export function syllabifyLyrics(raw: string, autoSplit = true): Syllable[] {
   const lines = raw.split(/\r?\n/)
   const syllables: Syllable[] = []
 
@@ -173,7 +181,7 @@ export function syllabifyLyrics(raw: string): Syllable[] {
       return
     }
     words.forEach((word) => {
-      const parts = syllabifyWord(word)
+      const parts = syllabifyWord(word, autoSplit)
       parts.forEach((part, partIndex) => {
         syllables.push({
           text: part,
@@ -199,26 +207,24 @@ function syllableToken(syllable: Syllable): string {
 
 export interface AlignmentResult {
   notes: VocalNote[]
-  /** Syllables that did not fit (more syllables than notes). */
-  leftoverSyllables: number
+  /** Formatted tokens that did not fit (more syllables than notes), in order. */
+  leftoverTokens: string[]
   /** Notes past the last syllable, auto-marked as `+` slides. */
   slideNotes: number
 }
 
 /**
  * Assign syllables to melody notes in order. Extra notes beyond the lyrics are
- * marked `+` (held/slide); extra syllables beyond the notes are reported so the
- * user can fix them manually.
+ * marked `+` (held/slide); extra syllables beyond the notes are returned as
+ * leftover tokens so the editor can flow them back in when notes shift.
  */
 export function alignLyricsToNotes(notes: VocalNote[], syllables: Syllable[]): AlignmentResult {
   const aligned = notes.map((note) => ({ ...note }))
-  let s = 0
   let slideNotes = 0
 
   for (let i = 0; i < aligned.length; i += 1) {
-    if (s < syllables.length) {
-      aligned[i].lyric = syllableToken(syllables[s])
-      s += 1
+    if (i < syllables.length) {
+      aligned[i].lyric = syllableToken(syllables[i])
     } else {
       // Out of syllables: treat remaining notes as held/slide.
       aligned[i].lyric = '+'
@@ -228,7 +234,7 @@ export function alignLyricsToNotes(notes: VocalNote[], syllables: Syllable[]): A
 
   return {
     notes: aligned,
-    leftoverSyllables: Math.max(0, syllables.length - notes.length),
+    leftoverTokens: syllables.slice(notes.length).map(syllableToken),
     slideNotes,
   }
 }
