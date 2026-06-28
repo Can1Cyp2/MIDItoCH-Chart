@@ -1050,6 +1050,23 @@ textarea {
   color: #b9d6ff;
 }
 
+.shortcuts-hint {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: rgba(184, 209, 247, 0.75);
+}
+
+.shortcuts-hint kbd {
+  display: inline-block;
+  padding: 0 0.35rem;
+  border-radius: 5px;
+  border: 1px solid rgba(146, 193, 255, 0.45);
+  background: rgba(8, 24, 48, 0.8);
+  color: #eaf3ff;
+  font-size: 0.75rem;
+  font-family: inherit;
+}
+
 .editor-pitch {
   min-width: 9rem;
   font-weight: 700;

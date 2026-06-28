@@ -143,6 +143,7 @@ function VocalTimeline({
   const onUpdateNoteRef = useRef(onUpdateNote)
   const timeScaleRef = useRef(1)
   const togglePlayRef = useRef<() => void>(() => {})
+  const stepRef = useRef<(delta: number) => void>(() => {})
 
   const effectiveBpm =
     bpmSource === 'midi'
@@ -176,6 +177,7 @@ function VocalTimeline({
     onUpdateNoteRef.current = onUpdateNote
     timeScaleRef.current = timeScale
     togglePlayRef.current = togglePlay
+    stepRef.current = step
   })
 
   // Drag to move/resize notes. Listeners stay mounted and no-op unless dragging.
@@ -208,19 +210,24 @@ function VocalTimeline({
     }
   }, [])
 
-  // Spacebar toggles play (unless typing in a field).
+  // Keyboard shortcuts: Space = play/pause, Left/Right = previous/next note.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.code !== 'Space') {
-        return
-      }
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
         return
       }
-      event.preventDefault()
-      togglePlayRef.current()
+      if (event.code === 'Space') {
+        event.preventDefault()
+        togglePlayRef.current()
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        stepRef.current(-1)
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        stepRef.current(1)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -565,9 +572,19 @@ function VocalTimeline({
     if (sortedNotes.length === 0) {
       return
     }
-    const base = selectedIndex >= 0 ? selectedIndex : 0
+    const base = selectedIndex >= 0 ? selectedIndex : delta > 0 ? -1 : 0
     const next = Math.min(sortedNotes.length - 1, Math.max(0, base + delta))
-    setSelectedId(sortedNotes[next].id)
+    const note = sortedNotes[next]
+    setSelectedId(note.id)
+    // Keep the newly selected note in view.
+    const scroller = scrollRef.current
+    if (scroller) {
+      const left = note.time * pxPerSec
+      const view = scroller.clientWidth
+      if (left < scroller.scrollLeft + 40 || left > scroller.scrollLeft + view - 120) {
+        scroller.scrollLeft = left - view / 3
+      }
+    }
   }
 
   function shift(direction: 'earlier' | 'later'): void {
@@ -1056,6 +1073,11 @@ function VocalTimeline({
           Set &amp; advance
         </button>
       </div>
+
+      <p className="shortcuts-hint">
+        Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> previous/next note ·{' '}
+        <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo
+      </p>
     </div>
   )
 }
