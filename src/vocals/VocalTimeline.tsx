@@ -128,6 +128,8 @@ function VocalTimeline({
   const [songVolume, setSongVolume] = useState(1)
   const [midiVolume, setMidiVolume] = useState(0.9)
   const [resumeOffset, setResumeOffset] = useState(0)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const activeItemRef = useRef<HTMLButtonElement | null>(null)
   const [peaks, setPeaks] = useState<WavePeaks | null>(null)
   const [detectedBpm, setDetectedBpm] = useState<number | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -253,6 +255,13 @@ function VocalTimeline({
   useEffect(() => {
     synthRef.current?.setVolume(midiVolume)
   }, [midiVolume])
+
+  // Scroll the current word into view when the resume picker opens.
+  useEffect(() => {
+    if (pickerOpen) {
+      activeItemRef.current?.scrollIntoView({ block: 'center' })
+    }
+  }, [pickerOpen])
 
   const sortedNotes = useMemo(() => {
     const base = [...notes].sort((a, b) => a.time - b.time)
@@ -1155,19 +1164,56 @@ function VocalTimeline({
               type="button"
               className="mini-btn"
               disabled={lyricTokenList.length === 0}
-              title="Pick an earlier word in the lyrics to resume from"
+              title="Step back one word"
               onClick={() => setResumeOffset((o) => o - 1)}
             >
               ‹
             </button>
-            <span className="resume-word" title="The word that will land on the selected note">
-              {lyricTokenList[resumeIndex] ?? '(end)'}
-            </span>
+            <div className="resume-word-wrap">
+              <button
+                type="button"
+                className="resume-word"
+                disabled={lyricTokenList.length === 0}
+                title="Click to choose which word the lyrics continue from"
+                onClick={() => setPickerOpen((open) => !open)}
+              >
+                {lyricTokenList[resumeIndex] ?? '(end)'} ▾
+              </button>
+              {pickerOpen ? (
+                <>
+                  <div className="resume-backdrop" onClick={() => setPickerOpen(false)} />
+                  <div className="resume-popup">
+                    <div className="resume-popup-title">Continue lyrics from…</div>
+                    <div className="resume-popup-list">
+                      {lyricTokenList.length === 0 ? (
+                        <span className="meta-row">No lyrics yet — paste lyrics first.</span>
+                      ) : (
+                        lyricTokenList.map((tok, i) => (
+                          <button
+                            key={`${i}-${tok}`}
+                            type="button"
+                            ref={i === resumeIndex ? activeItemRef : undefined}
+                            className={`resume-item ${i === resumeIndex ? 'active' : ''}`}
+                            onClick={() => {
+                              setResumeOffset(i - autoResumeIndex)
+                              setPickerOpen(false)
+                            }}
+                          >
+                            <span className="resume-item-idx">{i + 1}</span>
+                            {tok}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
             <button
               type="button"
               className="mini-btn"
               disabled={lyricTokenList.length === 0}
-              title="Pick a later word in the lyrics to resume from"
+              title="Step forward one word"
               onClick={() => setResumeOffset((o) => o + 1)}
             >
               ›
@@ -1185,7 +1231,7 @@ function VocalTimeline({
               type="button"
               className="primary-btn"
               disabled={sortedNotes.length === 0}
-              title="Re-flow the lyrics from the word shown above across the selected note and every note after it. Keeps earlier lyrics. Select the note where it should resume; auto guesses the word, the arrows let you choose."
+              title="Re-flow the lyrics from the word shown across the selected note and every note after it. Keeps earlier lyrics. Click the word to pick exactly where to continue."
               onClick={fillRest}
             >
               ⤓ fill rest from here
