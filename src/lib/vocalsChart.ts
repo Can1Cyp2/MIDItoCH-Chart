@@ -1,4 +1,5 @@
 import { Midi } from '@tonejs/midi'
+import { parseMidi } from 'midi-file'
 
 /**
  * Vocals charting for YARG / Rock Band style `PART VOCALS` tracks.
@@ -65,10 +66,44 @@ export function midiToNoteName(midi: number): string {
   return `${name}${octave}`
 }
 
+/**
+ * Read existing lyric events from the raw MIDI, keyed by absolute tick, so
+ * imported charts that already have lyrics keep them. @tonejs/midi only surfaces
+ * meta events from track 0, so we parse with midi-file to catch lyrics on the
+ * vocal track. Falls back to text events if no lyric events are present.
+ */
+function buildLyricMap(buffer: ArrayBuffer): Map<number, string> {
+  const map = new Map<number, string>()
+  let raw: ReturnType<typeof parseMidi>
+  try {
+    raw = parseMidi(new Uint8Array(buffer))
+  } catch {
+    return map
+  }
+  const collect = (type: 'lyrics' | 'text') => {
+    for (const track of raw.tracks) {
+      let tick = 0
+      for (const event of track) {
+        tick += event.deltaTime
+        const text = (event as { text?: string }).text
+        if (event.type === type && typeof text === 'string' && text.length > 0 && !map.has(tick)) {
+          map.set(tick, text)
+        }
+      }
+    }
+  }
+  collect('lyrics')
+  if (map.size === 0) {
+    collect('text')
+  }
+  return map
+}
+
 /** Parse a MIDI file into per-track note lists for vocal melody selection. */
 export async function parseVocalMidi(file: File): Promise<ParsedVocalMidi> {
   const buffer = await file.arrayBuffer()
   const midi = new Midi(buffer)
+  const lyricByTick = buildLyricMap(buffer)
 
   const tracks: ParsedMidiTrack[] = midi.tracks
     .map((track, index) => {
@@ -82,7 +117,7 @@ export async function parseVocalMidi(file: File): Promise<ParsedVocalMidi> {
           time: note.time,
           duration: Math.max(0.05, note.duration),
           midi: note.midi,
-          lyric: '',
+          lyric: lyricByTick.get(note.ticks) ?? '',
         }))
         .sort((a, b) => a.ticks - b.ticks || a.midi - b.midi)
       return {
