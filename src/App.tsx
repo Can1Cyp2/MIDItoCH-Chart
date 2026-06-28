@@ -116,7 +116,13 @@ function suggestMidiTrackIndices(
   return [nonEmpty[0].index]
 }
 
-function ConverterView({ onOpenVocals }: { onOpenVocals: () => void }) {
+function ConverterView({
+  onOpenVocals,
+  onConverted,
+}: {
+  onOpenVocals: () => void
+  onConverted: (result: ConversionResult) => void
+}) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -598,6 +604,7 @@ function ConverterView({ onOpenVocals }: { onOpenVocals: () => void }) {
       }
 
       setResult(converted)
+      onConverted(converted)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Conversion failed.'
       setErrorMessage(message)
@@ -1258,12 +1265,19 @@ function ConverterView({ onOpenVocals }: { onOpenVocals: () => void }) {
 
 function App() {
   const [view, setView] = useState<AppView>('converter')
+  // Most recent converted instrument chart, shared so the vocals view can merge it.
+  const [instrumentChart, setInstrumentChart] = useState<ConversionResult | null>(null)
 
   if (view === 'vocals') {
-    return <VocalsView onBack={() => setView('converter')} />
+    return <VocalsView onBack={() => setView('converter')} instrumentChart={instrumentChart} />
   }
 
-  return <ConverterView onOpenVocals={() => setView('vocals')} />
+  return (
+    <ConverterView
+      onOpenVocals={() => setView('vocals')}
+      onConverted={setInstrumentChart}
+    />
+  )
 }
 
 export default App

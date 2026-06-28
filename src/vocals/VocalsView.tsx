@@ -8,14 +8,17 @@ import {
   type VocalNote,
 } from '../lib/vocalsChart'
 import VocalTimeline from './VocalTimeline'
+import { buildMergedMidi } from '../lib/mergeMidi'
+import type { ConversionResult } from '../lib/midiToChart'
 
 const ACCEPTED_MIDI = '.mid,.midi,audio/midi,audio/x-midi'
 
 interface VocalsViewProps {
   onBack: () => void
+  instrumentChart: ConversionResult | null
 }
 
-function VocalsView({ onBack }: VocalsViewProps) {
+function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
   const [parsed, setParsed] = useState<ParsedVocalMidi | null>(null)
   const [selectedTrackIndex, setSelectedTrackIndex] = useState<number | null>(null)
   const [lyrics, setLyrics] = useState('')
@@ -25,6 +28,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [editorBpm, setEditorBpm] = useState<number | null>(null)
   const [autoSyllabify, setAutoSyllabify] = useState(true)
+  const [alignOffset, setAlignOffset] = useState(0)
   // Tokens that didn't fit on a note; flow back in when notes are pulled earlier.
   const [overflow, setOverflow] = useState<string[]>([])
   const sawDashRef = useRef(false)
@@ -342,6 +346,19 @@ function VocalsView({ onBack }: VocalsViewProps) {
     setOverflow(nextOverflow)
   }
 
+  function downloadMidi(data: Uint8Array, filename: string): void {
+    // Copy into a fresh, exactly-sized ArrayBuffer for a clean Blob.
+    const out = new Uint8Array(data.length)
+    out.set(data)
+    const blob = new Blob([out], { type: 'audio/midi' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   function onExport(): void {
     setError(null)
     if (!parsed || notes.length === 0) {
@@ -359,18 +376,43 @@ function VocalsView({ onBack }: VocalsViewProps) {
       timeSignatures: parsed.timeSignatures,
       notes,
     })
-    // Copy into a fresh, exactly-sized ArrayBuffer for a clean Blob.
-    const out = new Uint8Array(data.length)
-    out.set(data)
-    const blob = new Blob([out], { type: 'audio/midi' })
-    const url = URL.createObjectURL(blob)
     const base = parsed.fileName.replace(/\.[^/.]+$/, '')
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `${base} (PART VOCALS).mid`
-    anchor.click()
-    URL.revokeObjectURL(url)
+    downloadMidi(data, `${base} (PART VOCALS).mid`)
     setStatus('Exported PART VOCALS .mid — load it in YARG (or merge into your notes.mid).')
+  }
+
+  function onMerge(): void {
+    setError(null)
+    if (!instrumentChart) {
+      setError('Convert a drums/guitar/bass chart on the main page first, then come back.')
+      return
+    }
+    if (notes.length === 0) {
+      setError('Load a melody and map lyrics before merging.')
+      return
+    }
+    const meta = instrumentChart.meta
+    // Vocal real (song) seconds = editor display time + align offset.
+    const scale = midiBpm && editorBpm ? midiBpm / editorBpm : 1
+    const vocalNotes = notes.map((note) => ({
+      time: note.time * scale + alignOffset,
+      duration: note.duration * scale,
+      midi: note.midi,
+      lyric: note.lyric,
+    }))
+    const data = buildMergedMidi({
+      ppq: meta.ppq,
+      tempos: meta.tempos,
+      timeSignatures: meta.timeSignatures,
+      instrument: meta.instrumentMode,
+      instrumentNotes: meta.mergeNotes,
+      vocalNotes,
+    })
+    const base = meta.sourceFileName.replace(/\.[^/.]+$/, '')
+    downloadMidi(data, `${base} (notes).mid`)
+    setStatus(
+      `Merged ${meta.instrumentMode} + vocals into one notes.mid (${meta.mergeNotes.length} instrument notes, ${notes.length} vocal notes).`,
+    )
   }
 
   const mappedCount = notes.filter((note) => note.lyric.trim().length > 0).length
@@ -550,6 +592,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
                 midiBpm={midiBpm}
                 midiBpmVaries={midiBpmVaries}
                 onEffectiveBpmChange={setEditorBpm}
+                onAlignOffsetChange={setAlignOffset}
               />
               <div className="button-row export-row">
                 <button
@@ -560,8 +603,33 @@ function VocalsView({ onBack }: VocalsViewProps) {
                 >
                   Export PART VOCALS .mid
                 </button>
+                {instrumentChart ? (
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={onMerge}
+                    title={`Merge the vocals with the ${instrumentChart.meta.instrumentMode} chart you converted (${instrumentChart.meta.sourceFileName}) into one notes.mid`}
+                  >
+                    Merge with {instrumentChart.meta.instrumentMode} chart → notes.mid
+                  </button>
+                ) : null}
                 {status ? <span className="meta-row">{status}</span> : null}
               </div>
+              <p className="meta-row">
+                {instrumentChart ? (
+                  <>
+                    Merge uses the converted <strong>{instrumentChart.meta.instrumentMode}</strong>{' '}
+                    chart from <strong>{instrumentChart.meta.sourceFileName}</strong>. For correct
+                    alignment the vocals and that chart should be the same song at the same tempo;
+                    use the align offset to fine-tune the start.
+                  </>
+                ) : (
+                  <>
+                    To merge vocals with an instrument chart, convert a drums/guitar/bass chart on
+                    the main page first — it&apos;s remembered when you come back here.
+                  </>
+                )}
+              </p>
             </>
           )}
         </article>

@@ -278,14 +278,22 @@ function chunk(id: string, body: number[]): number[] {
   ]
 }
 
-interface TimedEvent {
+export interface TimedEvent {
   ticks: number
   /** Lower sort first at equal ticks: meta(0) < noteOff(1) < noteOn(2). */
   order: number
   bytes: number[]
 }
 
-function eventsToTrackBody(events: TimedEvent[]): number[] {
+export function midiMetaEvent(type: number, data: number[]): number[] {
+  return metaEvent(type, data)
+}
+
+export function midiTextBytes(text: string): number[] {
+  return stringBytes(text)
+}
+
+export function eventsToTrackBody(events: TimedEvent[]): number[] {
   const sorted = [...events].sort((a, b) => a.ticks - b.ticks || a.order - b.order)
   const body: number[] = []
   let prevTicks = 0
@@ -327,69 +335,73 @@ function buildPhraseRanges(notes: VocalNote[], ppq: number): Array<{ start: numb
   return ranges
 }
 
-/** Build a format-1 SMF: track 0 tempo/time-sig map, track 1 PART VOCALS. */
-export function buildVocalsMidi(input: BuildVocalsMidiInput): Uint8Array {
-  const { ppq } = input
-  const notes = [...input.notes].sort((a, b) => a.ticks - b.ticks)
-
-  // --- Track 0: tempo / time-signature map ---
-  const tempoEvents: TimedEvent[] = []
-  const tempos = input.tempos.length > 0 ? input.tempos : [{ ticks: 0, bpm: 120 }]
-  for (const tempo of tempos) {
+/** Tempo + time-signature map events for track 0 of a format-1 SMF. */
+export function tempoTrackEvents(
+  tempos: Array<{ ticks: number; bpm: number }>,
+  timeSignatures: Array<{ ticks: number; numerator: number; denominator: number }>,
+): TimedEvent[] {
+  const events: TimedEvent[] = []
+  const list = tempos.length > 0 ? tempos : [{ ticks: 0, bpm: 120 }]
+  for (const tempo of list) {
     const usPerQuarter = Math.round(60000000 / tempo.bpm)
-    tempoEvents.push({
+    events.push({
       ticks: tempo.ticks,
       order: 0,
-      bytes: metaEvent(0x51, [
-        (usPerQuarter >> 16) & 0xff,
-        (usPerQuarter >> 8) & 0xff,
-        usPerQuarter & 0xff,
-      ]),
+      bytes: metaEvent(0x51, [(usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff]),
     })
   }
-  for (const ts of input.timeSignatures) {
+  for (const ts of timeSignatures) {
     const denomPow = Math.round(Math.log2(Math.max(1, ts.denominator)))
-    tempoEvents.push({
-      ticks: ts.ticks,
-      order: 0,
-      bytes: metaEvent(0x58, [ts.numerator, denomPow, 24, 8]),
-    })
+    events.push({ ticks: ts.ticks, order: 0, bytes: metaEvent(0x58, [ts.numerator, denomPow, 24, 8]) })
   }
-  tempoEvents.push({ ticks: 0, order: 0, bytes: metaEvent(0x03, stringBytes('TEMPO')) })
+  events.push({ ticks: 0, order: 0, bytes: metaEvent(0x03, stringBytes('TEMPO')) })
+  return events
+}
 
-  // --- Track 1: PART VOCALS ---
-  const vocalEvents: TimedEvent[] = []
-  vocalEvents.push({ ticks: 0, order: 0, bytes: metaEvent(0x03, stringBytes('PART VOCALS')) })
-
+/** PART VOCALS track events: lyric meta, pitched notes, and phrase markers. */
+export function vocalsTrackEvents(notesInput: VocalNote[], ppq: number): TimedEvent[] {
+  const notes = [...notesInput].sort((a, b) => a.ticks - b.ticks)
+  const events: TimedEvent[] = [
+    { ticks: 0, order: 0, bytes: metaEvent(0x03, stringBytes('PART VOCALS')) },
+  ]
   for (const note of notes) {
     const pitch = Math.min(VOCALS_MAX_PITCH, Math.max(VOCALS_MIN_PITCH, note.midi))
     const end = note.ticks + Math.max(1, note.durationTicks)
     if (note.lyric.trim().length > 0) {
-      vocalEvents.push({ ticks: note.ticks, order: 0, bytes: metaEvent(0x05, stringBytes(note.lyric)) })
+      events.push({ ticks: note.ticks, order: 0, bytes: metaEvent(0x05, stringBytes(note.lyric)) })
     }
-    vocalEvents.push({ ticks: note.ticks, order: 2, bytes: [0x90, pitch, 100] })
-    vocalEvents.push({ ticks: end, order: 1, bytes: [0x80, pitch, 0] })
+    events.push({ ticks: note.ticks, order: 2, bytes: [0x90, pitch, 100] })
+    events.push({ ticks: end, order: 1, bytes: [0x80, pitch, 0] })
   }
-
   for (const range of buildPhraseRanges(notes, ppq)) {
-    vocalEvents.push({ ticks: range.start, order: 2, bytes: [0x90, VOCALS_PHRASE_NOTE, 100] })
-    vocalEvents.push({ ticks: range.end, order: 1, bytes: [0x80, VOCALS_PHRASE_NOTE, 0] })
+    events.push({ ticks: range.start, order: 2, bytes: [0x90, VOCALS_PHRASE_NOTE, 100] })
+    events.push({ ticks: range.end, order: 1, bytes: [0x80, VOCALS_PHRASE_NOTE, 0] })
   }
+  return events
+}
 
+/** Assemble a format-1 SMF from one event list per track. */
+export function assembleMidi(ppq: number, trackEventLists: TimedEvent[][]): Uint8Array {
+  const trackCount = trackEventLists.length
   const header = chunk('MThd', [
     0x00,
     0x01, // format 1
-    0x00,
-    0x02, // 2 tracks
+    (trackCount >> 8) & 0xff,
+    trackCount & 0xff,
     (ppq >> 8) & 0xff,
     ppq & 0xff,
   ])
-
-  const bytes = [
-    ...header,
-    ...chunk('MTrk', eventsToTrackBody(tempoEvents)),
-    ...chunk('MTrk', eventsToTrackBody(vocalEvents)),
-  ]
-
+  const bytes = [...header]
+  for (const list of trackEventLists) {
+    bytes.push(...chunk('MTrk', eventsToTrackBody(list)))
+  }
   return new Uint8Array(bytes)
+}
+
+/** Build a format-1 SMF: track 0 tempo/time-sig map, track 1 PART VOCALS. */
+export function buildVocalsMidi(input: BuildVocalsMidiInput): Uint8Array {
+  return assembleMidi(input.ppq, [
+    tempoTrackEvents(input.tempos, input.timeSignatures),
+    vocalsTrackEvents(input.notes, input.ppq),
+  ])
 }

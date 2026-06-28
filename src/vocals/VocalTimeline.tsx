@@ -27,6 +27,7 @@ interface VocalTimelineProps {
   midiBpm: number | null
   midiBpmVaries: boolean
   onEffectiveBpmChange: (bpm: number | null) => void
+  onAlignOffsetChange: (offset: number) => void
 }
 
 interface PitchBounds {
@@ -108,6 +109,7 @@ function VocalTimeline({
   midiBpm,
   midiBpmVaries,
   onEffectiveBpmChange,
+  onAlignOffsetChange,
 }: VocalTimelineProps) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -154,10 +156,14 @@ function VocalTimeline({
   const timeScale =
     midiBpm && midiBpm > 0 && effectiveBpm && effectiveBpm > 0 ? midiBpm / effectiveBpm : 1
 
-  // Keep the export side (in the parent) in sync with the chosen tempo.
+  // Keep the export side (in the parent) in sync with the chosen tempo + offset.
   useEffect(() => {
     onEffectiveBpmChange(effectiveBpm && effectiveBpm > 0 ? effectiveBpm : null)
   }, [effectiveBpm, onEffectiveBpmChange])
+
+  useEffect(() => {
+    onAlignOffsetChange(audioOffset)
+  }, [audioOffset, onAlignOffsetChange])
 
   // Mutable mirrors so the rAF loop reads current values without re-subscribing.
   const offsetRef = useRef(audioOffset)
