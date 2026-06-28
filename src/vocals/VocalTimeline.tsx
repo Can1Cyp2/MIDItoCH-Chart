@@ -22,6 +22,8 @@ interface VocalTimelineProps {
   onSplitNote: (id: string) => void
   onUndo: () => void
   canUndo: boolean
+  onRedo: () => void
+  canRedo: boolean
   midiBpm: number | null
   midiBpmVaries: boolean
   onEffectiveBpmChange: (bpm: number | null) => void
@@ -101,6 +103,8 @@ function VocalTimeline({
   onSplitNote,
   onUndo,
   canUndo,
+  onRedo,
+  canRedo,
   midiBpm,
   midiBpmVaries,
   onEffectiveBpmChange,
@@ -933,6 +937,15 @@ function VocalTimeline({
           onClick={onUndo}
         >
           ↶ undo
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={!canRedo}
+          title="Redo the last undone change (Ctrl+Shift+Z or Ctrl+Y)"
+          onClick={onRedo}
+        >
+          ↷ redo
         </button>
         <span className="shift-label">Notes:</span>
         <button

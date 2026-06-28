@@ -29,13 +29,21 @@ function VocalsView({ onBack }: VocalsViewProps) {
   const [overflow, setOverflow] = useState<string[]>([])
   const sawDashRef = useRef(false)
 
-  // Undo history of note + overflow snapshots.
-  const historyRef = useRef<Array<{ notes: VocalNote[]; overflow: string[] }>>([])
+  // Undo/redo history of note + overflow snapshots.
+  type Snapshot = { notes: VocalNote[]; overflow: string[] }
+  const historyRef = useRef<Snapshot[]>([])
+  const redoRef = useRef<Snapshot[]>([])
   const lastRecordRef = useRef<{ label: string; time: number }>({ label: '', time: 0 })
   const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
 
   /** Snapshot state before a mutation. Rapid same-label edits (typing, dragging) coalesce. */
   function record(label: string): void {
+    // Any fresh edit invalidates the redo stack.
+    if (redoRef.current.length > 0) {
+      redoRef.current = []
+      setCanRedo(false)
+    }
     const now = Date.now()
     const last = lastRecordRef.current
     lastRecordRef.current = { label, time: now }
@@ -54,30 +62,55 @@ function VocalsView({ onBack }: VocalsViewProps) {
     if (!prev) {
       return
     }
+    redoRef.current.push({ notes, overflow })
     setNotes(prev.notes)
     setOverflow(prev.overflow)
     setCanUndo(historyRef.current.length > 0)
+    setCanRedo(true)
     lastRecordRef.current = { label: '', time: 0 }
     setStatus('Undid last change.')
   }
 
-  function clearHistory(): void {
-    historyRef.current = []
+  function redo(): void {
+    const next = redoRef.current.pop()
+    if (!next) {
+      return
+    }
+    historyRef.current.push({ notes, overflow })
+    setNotes(next.notes)
+    setOverflow(next.overflow)
+    setCanRedo(redoRef.current.length > 0)
+    setCanUndo(true)
     lastRecordRef.current = { label: '', time: 0 }
-    setCanUndo(false)
+    setStatus('Redid change.')
   }
 
-  // Ctrl/Cmd+Z to undo (when not typing in a field).
+  function clearHistory(): void {
+    historyRef.current = []
+    redoRef.current = []
+    lastRecordRef.current = { label: '', time: 0 }
+    setCanUndo(false)
+    setCanRedo(false)
+  }
+
+  // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo (when not typing).
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        const target = event.target as HTMLElement | null
-        const tag = target?.tagName
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
-          return
-        }
+      if (!event.ctrlKey && !event.metaKey) {
+        return
+      }
+      const key = event.key.toLowerCase()
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
+        return
+      }
+      if (key === 'z' && !event.shiftKey) {
         event.preventDefault()
         undo()
+      } else if ((key === 'z' && event.shiftKey) || key === 'y') {
+        event.preventDefault()
+        redo()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -512,6 +545,8 @@ function VocalsView({ onBack }: VocalsViewProps) {
                 onSplitNote={splitNote}
                 onUndo={undo}
                 canUndo={canUndo}
+                onRedo={redo}
+                canRedo={canRedo}
                 midiBpm={midiBpm}
                 midiBpmVaries={midiBpmVaries}
                 onEffectiveBpmChange={setEditorBpm}
