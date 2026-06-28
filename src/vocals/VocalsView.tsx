@@ -182,7 +182,11 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
       setNotes(richest.notes.map((note) => ({ ...note })))
       setOverflow([])
       clearHistory()
-      setStatus(`Loaded ${result.fileName}: ${richest.noteCount} notes from "${richest.name}".`)
+      const ignored =
+        richest.markersIgnored > 0
+          ? ` Ignored ${richest.markersIgnored} phrase/overdrive marker note(s) — fresh ones are added on export.`
+          : ''
+      setStatus(`Loaded ${result.fileName}: ${richest.noteCount} notes from "${richest.name}".${ignored}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not parse that MIDI file.')
     }
@@ -200,7 +204,9 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
     setNotes(track.notes.map((note) => ({ ...note })))
     setOverflow([])
     clearHistory()
-    setStatus(`Selected "${track.name}": ${track.noteCount} notes.`)
+    const ignored =
+      track.markersIgnored > 0 ? ` (ignored ${track.markersIgnored} marker note(s))` : ''
+    setStatus(`Selected "${track.name}": ${track.noteCount} notes${ignored}.`)
   }
 
   function onAutoMap(): void {

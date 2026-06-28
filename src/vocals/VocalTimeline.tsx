@@ -149,6 +149,7 @@ function VocalTimeline({
   const timeScaleRef = useRef(1)
   const togglePlayRef = useRef<() => void>(() => {})
   const stepRef = useRef<(delta: number) => void>(() => {})
+  const deleteSelectedRef = useRef<() => void>(() => {})
 
   const effectiveBpm =
     bpmSource === 'midi'
@@ -183,6 +184,7 @@ function VocalTimeline({
     timeScaleRef.current = timeScale
     togglePlayRef.current = togglePlay
     stepRef.current = step
+    deleteSelectedRef.current = deleteSelected
   })
 
   // Drag to move/resize notes. Listeners stay mounted and no-op unless dragging.
@@ -232,6 +234,9 @@ function VocalTimeline({
       } else if (event.key === 'ArrowRight') {
         event.preventDefault()
         stepRef.current(1)
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault()
+        deleteSelectedRef.current()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -1216,7 +1221,8 @@ function VocalTimeline({
 
       <p className="shortcuts-hint">
         Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> previous/next note ·{' '}
-        <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo
+        <kbd>Del</kbd>/<kbd>Backspace</kbd> delete note · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo ·{' '}
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo
       </p>
     </div>
   )

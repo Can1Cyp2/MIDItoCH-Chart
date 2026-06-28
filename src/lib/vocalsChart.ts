@@ -37,8 +37,17 @@ export interface ParsedMidiTrack {
   index: number
   name: string
   noteCount: number
+  /** RB/YARG marker notes (phrase 105/106, overdrive 116, etc.) dropped on import. */
+  markersIgnored: number
   notes: VocalNote[]
 }
+
+/**
+ * Notes at or above this pitch in a vocals MIDI are control markers, not sung
+ * pitches: phrase markers (105 = A7, 106), overdrive (116), and percussion. We
+ * drop them on import and emit fresh phrase markers on export.
+ */
+const VOCAL_MARKER_FLOOR = 96
 
 export interface ParsedVocalMidi {
   fileName: string
@@ -63,7 +72,9 @@ export async function parseVocalMidi(file: File): Promise<ParsedVocalMidi> {
 
   const tracks: ParsedMidiTrack[] = midi.tracks
     .map((track, index) => {
-      const notes: VocalNote[] = track.notes
+      const sung = track.notes.filter((note) => note.midi < VOCAL_MARKER_FLOOR)
+      const markersIgnored = track.notes.length - sung.length
+      const notes: VocalNote[] = sung
         .map((note) => ({
           id: `n-${index}-${note.ticks}-${note.midi}`,
           ticks: note.ticks,
@@ -78,6 +89,7 @@ export async function parseVocalMidi(file: File): Promise<ParsedVocalMidi> {
         index,
         name: track.name?.trim() || `Track ${index + 1}`,
         noteCount: notes.length,
+        markersIgnored,
         notes,
       }
     })
