@@ -1,5 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { midiToNoteName, type VocalNote } from '../lib/vocalsChart'
+import { computePeaks, decodeAudio, detectBpm, type WavePeaks } from '../lib/audioAnalysis'
+
+type BpmSource = 'midi' | 'detected' | 'custom'
 
 const LANE_HEIGHT = 16
 const RULER_HEIGHT = 22
@@ -11,6 +14,8 @@ interface VocalTimelineProps {
   notes: VocalNote[]
   onChangeLyric: (id: string, lyric: string) => void
   onShift: (orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later') => void
+  midiBpm: number | null
+  midiBpmVaries: boolean
 }
 
 interface PitchBounds {
@@ -83,7 +88,7 @@ const NotesLayer = memo(function NotesLayer({
   )
 })
 
-function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
+function VocalTimeline({ notes, onChangeLyric, onShift, midiBpm, midiBpmVaries }: VocalTimelineProps) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [pxPerSec, setPxPerSec] = useState(120)
@@ -92,12 +97,25 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [typeAlong, setTypeAlong] = useState('')
   const [audioDuration, setAudioDuration] = useState(0)
+  const [peaks, setPeaks] = useState<WavePeaks | null>(null)
+  const [detectedBpm, setDetectedBpm] = useState<number | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [bpmSource, setBpmSource] = useState<BpmSource>('midi')
+  const [customBpm, setCustomBpm] = useState(120)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const playheadRef = useRef<HTMLDivElement | null>(null)
   const timeLabelRef = useRef<HTMLSpanElement | null>(null)
+  const waveRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
+
+  const effectiveBpm =
+    bpmSource === 'midi'
+      ? midiBpm ?? customBpm
+      : bpmSource === 'detected'
+        ? detectedBpm ?? customBpm
+        : customBpm
   // Mutable mirrors so the rAF loop reads current values without re-subscribing.
   const offsetRef = useRef(audioOffset)
   const pxRef = useRef(pxPerSec)
@@ -179,7 +197,75 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
     }
   }, [audioUrl])
 
-  function onAudioPicked(file: File | null): void {
+  // Draw the waveform (audio energy under the notes) and the BPM beat grid.
+  // Uses a viewport-sized canvas kept pinned to scrollLeft so it stays valid
+  // even when the full timeline is far wider than a canvas can be.
+  useEffect(() => {
+    function draw() {
+      const canvas = waveRef.current
+      const scroller = scrollRef.current
+      if (!canvas || !scroller) {
+        return
+      }
+      const view = scroller.clientWidth
+      const sl = scroller.scrollLeft
+      const h = bounds.height
+      if (canvas.width !== view) canvas.width = view
+      if (canvas.height !== h) canvas.height = h
+      canvas.style.left = `${sl}px`
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        return
+      }
+      ctx.clearRect(0, 0, view, h)
+
+      if (peaks) {
+        ctx.strokeStyle = 'rgba(120, 180, 255, 0.4)'
+        ctx.beginPath()
+        for (let px = 0; px < view; px += 1) {
+          const audioTime = (sl + px) / pxPerSec + audioOffset
+          if (audioTime < 0 || audioTime >= peaks.duration) {
+            continue
+          }
+          const b = Math.floor(audioTime * peaks.bucketsPerSec)
+          if (b < 0 || b >= peaks.max.length) {
+            continue
+          }
+          const y1 = (1 - peaks.max[b]) * 0.5 * h
+          const y2 = (1 - peaks.min[b]) * 0.5 * h
+          ctx.moveTo(px + 0.5, y1)
+          ctx.lineTo(px + 0.5, y2)
+        }
+        ctx.stroke()
+      }
+
+      if (effectiveBpm && effectiveBpm > 0) {
+        const beatSec = 60 / effectiveBpm
+        const audioLo = sl / pxPerSec + audioOffset
+        const audioHi = (sl + view) / pxPerSec + audioOffset
+        const kStart = Math.max(0, Math.floor(audioLo / beatSec))
+        const kEnd = Math.ceil(audioHi / beatSec)
+        for (let k = kStart; k <= kEnd && k - kStart < 2000; k += 1) {
+          const px = (k * beatSec - audioOffset) * pxPerSec - sl
+          if (px < 0 || px > view) {
+            continue
+          }
+          ctx.strokeStyle = k % 4 === 0 ? 'rgba(255, 231, 153, 0.35)' : 'rgba(255, 231, 153, 0.13)'
+          ctx.beginPath()
+          ctx.moveTo(px + 0.5, 0)
+          ctx.lineTo(px + 0.5, h)
+          ctx.stroke()
+        }
+      }
+    }
+
+    draw()
+    const scroller = scrollRef.current
+    scroller?.addEventListener('scroll', draw)
+    return () => scroller?.removeEventListener('scroll', draw)
+  }, [peaks, pxPerSec, audioOffset, effectiveBpm, bounds.height, bounds.max])
+
+  async function onAudioPicked(file: File | null): Promise<void> {
     if (!file) {
       return
     }
@@ -189,6 +275,23 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
       }
       return URL.createObjectURL(file)
     })
+    setPeaks(null)
+    setDetectedBpm(null)
+    setAnalyzing(true)
+    try {
+      const buffer = await decodeAudio(file)
+      setAudioDuration(buffer.duration)
+      setPeaks(computePeaks(buffer))
+      const bpm = await detectBpm(buffer)
+      setDetectedBpm(bpm)
+      if (bpm) {
+        setBpmSource('detected')
+      }
+    } catch {
+      // Leave waveform/BPM unset; manual offset + custom BPM still work.
+    } finally {
+      setAnalyzing(false)
+    }
   }
 
   function togglePlay(): void {
@@ -280,7 +383,7 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
           <input
             type="file"
             accept="audio/*"
-            onChange={(event) => onAudioPicked(event.target.files?.[0] ?? null)}
+            onChange={(event) => void onAudioPicked(event.target.files?.[0] ?? null)}
           />
           {audioUrl ? 'Change song audio' : 'Load song / vocal stem'}
         </label>
@@ -361,6 +464,56 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
         </label>
       </div>
 
+      <div className="transport bpm-row">
+        <span
+          className="ctrl"
+          title="Tempo for the beat grid drawn on the timeline. Needed only if the MIDI's tempo doesn't match the song — otherwise the align offset alone lines things up."
+        >
+          BPM grid:
+        </span>
+        <button
+          type="button"
+          className={`mini-btn wide ${bpmSource === 'midi' ? 'active' : ''}`}
+          disabled={midiBpm == null}
+          title="Use the tempo stored in the melody MIDI"
+          onClick={() => setBpmSource('midi')}
+        >
+          MIDI {midiBpm != null ? Math.round(midiBpm) : '—'}
+          {midiBpmVaries ? '*' : ''}
+        </button>
+        <button
+          type="button"
+          className={`mini-btn wide ${bpmSource === 'detected' ? 'active' : ''}`}
+          disabled={detectedBpm == null}
+          title="Tempo auto-detected from the loaded audio. Reliable on strong-beat mixes, shaky on bare vocal stems — double-check it."
+          onClick={() => setBpmSource('detected')}
+        >
+          Detected {analyzing ? '…' : detectedBpm != null ? detectedBpm : '—'}
+        </button>
+        <button
+          type="button"
+          className={`mini-btn wide ${bpmSource === 'custom' ? 'active' : ''}`}
+          title="Type the tempo yourself"
+          onClick={() => setBpmSource('custom')}
+        >
+          Custom
+        </button>
+        {bpmSource === 'custom' ? (
+          <input
+            type="number"
+            className="bpm-input"
+            min={40}
+            max={300}
+            value={customBpm}
+            title="Custom tempo in beats per minute"
+            onChange={(event) => setCustomBpm(Number(event.target.value) || 0)}
+          />
+        ) : null}
+        <span className="offset-value" title="Tempo currently driving the beat grid">
+          = {effectiveBpm ? Math.round(effectiveBpm) : '—'} BPM
+        </span>
+      </div>
+
       {audioUrl ? (
         <audio
           ref={audioRef}
@@ -383,6 +536,7 @@ function VocalTimeline({ notes, onChangeLyric, onShift }: VocalTimelineProps) {
               </span>
             ))}
           </div>
+          <canvas ref={waveRef} className="tl-wave" style={{ top: RULER_HEIGHT }} />
           <NotesLayer
             notes={sortedNotes}
             pxPerSec={pxPerSec}

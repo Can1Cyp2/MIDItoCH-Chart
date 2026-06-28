@@ -725,6 +725,18 @@ textarea {
   border-color: #ffe95a;
 }
 
+.mini-btn.wide {
+  width: auto;
+  padding: 0 0.6rem;
+  font-weight: 600;
+}
+
+.mini-btn.active {
+  background: linear-gradient(180deg, #ffd94d, #ff9f1c);
+  color: #1e1600;
+  border-color: rgba(255, 231, 153, 0.95);
+}
+
 /* --- DAW-style vocals timeline --- */
 .vocals-single {
   grid-template-columns: 1fr;
@@ -815,6 +827,26 @@ textarea {
 
 .timeline-content {
   position: relative;
+}
+
+.tl-wave {
+  position: absolute;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.bpm-row {
+  margin-top: 0.1rem;
+}
+
+.bpm-input {
+  width: 4.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(146, 193, 255, 0.45);
+  background: rgba(4, 16, 35, 0.7);
+  color: #eaf3ff;
+  padding: 0.3rem 0.4rem;
 }
 
 .tl-ruler {

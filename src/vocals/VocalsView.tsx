@@ -30,6 +30,11 @@ function VocalsView({ onBack }: VocalsViewProps) {
 
   const syllableCount = useMemo(() => syllabifyLyrics(lyrics).length, [lyrics])
 
+  const midiBpm = parsed?.tempos[0]?.bpm ?? null
+  const midiBpmVaries =
+    (parsed?.tempos.length ?? 0) > 1 &&
+    new Set(parsed?.tempos.map((t) => Math.round(t.bpm))).size > 1
+
   async function onMidiPicked(file: File | null): Promise<void> {
     setError(null)
     setStatus(null)
@@ -270,7 +275,13 @@ function VocalsView({ onBack }: VocalsViewProps) {
           {notes.length === 0 ? (
             <p className="meta-row">Load a melody MIDI above to start editing notes.</p>
           ) : (
-            <VocalTimeline notes={notes} onChangeLyric={updateNoteLyric} onShift={shiftLyrics} />
+            <VocalTimeline
+              notes={notes}
+              onChangeLyric={updateNoteLyric}
+              onShift={shiftLyrics}
+              midiBpm={midiBpm}
+              midiBpmVaries={midiBpmVaries}
+            />
           )}
         </article>
       </section>
