@@ -22,6 +22,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
   const [notes, setNotes] = useState<VocalNote[]>([])
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   const selectedTrack = useMemo(
     () => parsed?.tracks.find((track) => track.index === selectedTrackIndex) ?? null,
@@ -182,14 +183,37 @@ function VocalsView({ onBack }: VocalsViewProps) {
       <section className="grid-layout vocals-single">
         <article className="panel">
           <h2>1. Vocal melody MIDI</h2>
-          <label className="dropzone">
+          <label
+            className={`dropzone ${isDragging ? 'dragging' : ''} ${parsed ? 'loaded' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setIsDragging(true)
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault()
+              setIsDragging(false)
+              void onMidiPicked(event.dataTransfer.files?.[0] ?? null)
+            }}
+          >
             <input
               type="file"
               accept={ACCEPTED_MIDI}
               onChange={(event) => void onMidiPicked(event.target.files?.[0] ?? null)}
             />
-            <span className="dropzone-title">Drop a vocal melody .mid here</span>
-            <span className="dropzone-subtitle">One note per sung pitch works best</span>
+            {parsed ? (
+              <>
+                <span className="dropzone-title">✓ {parsed.fileName}</span>
+                <span className="dropzone-subtitle">
+                  {selectedTrack?.noteCount ?? notes.length} notes loaded — drop another file or click to replace
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="dropzone-title">Drop a vocal melody .mid here</span>
+                <span className="dropzone-subtitle">or click to browse · one note per sung pitch works best</span>
+              </>
+            )}
           </label>
 
           {parsed && parsed.tracks.length > 1 ? (

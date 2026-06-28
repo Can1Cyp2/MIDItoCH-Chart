@@ -136,6 +136,16 @@
   border-color: #ffe95a;
 }
 
+.dropzone.loaded {
+  border-style: solid;
+  border-color: rgba(120, 230, 150, 0.85);
+  background: rgba(20, 60, 40, 0.35);
+}
+
+.dropzone.loaded .dropzone-title {
+  color: #b6f5c8;
+}
+
 .dropzone input {
   display: none;
 }
