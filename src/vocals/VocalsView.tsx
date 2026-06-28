@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   alignLyricsToNotes,
   buildVocalsMidi,
@@ -28,6 +28,61 @@ function VocalsView({ onBack }: VocalsViewProps) {
   // Tokens that didn't fit on a note; flow back in when notes are pulled earlier.
   const [overflow, setOverflow] = useState<string[]>([])
   const sawDashRef = useRef(false)
+
+  // Undo history of note + overflow snapshots.
+  const historyRef = useRef<Array<{ notes: VocalNote[]; overflow: string[] }>>([])
+  const lastRecordRef = useRef<{ label: string; time: number }>({ label: '', time: 0 })
+  const [canUndo, setCanUndo] = useState(false)
+
+  /** Snapshot state before a mutation. Rapid same-label edits (typing, dragging) coalesce. */
+  function record(label: string): void {
+    const now = Date.now()
+    const last = lastRecordRef.current
+    lastRecordRef.current = { label, time: now }
+    if (label === 'note-edit' && last.label === 'note-edit' && now - last.time < 700) {
+      return
+    }
+    historyRef.current.push({ notes, overflow })
+    if (historyRef.current.length > 100) {
+      historyRef.current.shift()
+    }
+    setCanUndo(true)
+  }
+
+  function undo(): void {
+    const prev = historyRef.current.pop()
+    if (!prev) {
+      return
+    }
+    setNotes(prev.notes)
+    setOverflow(prev.overflow)
+    setCanUndo(historyRef.current.length > 0)
+    lastRecordRef.current = { label: '', time: 0 }
+    setStatus('Undid last change.')
+  }
+
+  function clearHistory(): void {
+    historyRef.current = []
+    lastRecordRef.current = { label: '', time: 0 }
+    setCanUndo(false)
+  }
+
+  // Ctrl/Cmd+Z to undo (when not typing in a field).
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        const target = event.target as HTMLElement | null
+        const tag = target?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
+          return
+        }
+        event.preventDefault()
+        undo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   // Once a dash appears in the lyrics, switch off auto-syllabify and respect the
   // user's manual dashes (they can turn it back on). Handled here, not in an
@@ -88,6 +143,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
       setSelectedTrackIndex(richest.index)
       setNotes(richest.notes.map((note) => ({ ...note })))
       setOverflow([])
+      clearHistory()
       setStatus(`Loaded ${result.fileName}: ${richest.noteCount} notes from "${richest.name}".`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not parse that MIDI file.')
@@ -105,6 +161,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
     setSelectedTrackIndex(index)
     setNotes(track.notes.map((note) => ({ ...note })))
     setOverflow([])
+    clearHistory()
     setStatus(`Selected "${track.name}": ${track.noteCount} notes.`)
   }
 
@@ -119,6 +176,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
       setError('Paste some lyrics to map onto the melody.')
       return
     }
+    record('map')
     const result = alignLyricsToNotes(notes, syllables)
     setNotes(result.notes)
     setOverflow(result.leftoverTokens)
@@ -135,6 +193,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
   }
 
   function updateNoteLyric(id: string, lyric: string): void {
+    record('note-edit')
     setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, lyric } : note)))
   }
 
@@ -146,6 +205,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
    * is filled from the overflow reserve if any leftover lyrics remain).
    */
   function shiftLyrics(orderedIds: string[], fromIndex: number, direction: 'earlier' | 'later'): void {
+    record('shift')
     const lyricById = new Map(notes.map((note) => [note.id, note.lyric]))
     const lyrics = orderedIds.map((id) => lyricById.get(id) ?? '')
     let nextOverflow = [...overflow]
@@ -172,6 +232,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
   }
 
   function updateNote(id: string, patch: { time?: number; duration?: number; midi?: number }): void {
+    record('note-edit')
     setNotes((prev) =>
       prev
         .map((note) =>
@@ -189,6 +250,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
   }
 
   function addNote(time: number, midi: number): void {
+    record('add')
     const id = `add-${Date.now()}-${Math.round(Math.random() * 1e6)}`
     const base: VocalNote = { id, ticks: 0, durationTicks: 1, time: 0, duration: 0, midi, lyric: '' }
     setNotes((prev) =>
@@ -197,10 +259,12 @@ function VocalsView({ onBack }: VocalsViewProps) {
   }
 
   function deleteNote(id: string): void {
+    record('delete')
     setNotes((prev) => prev.filter((note) => note.id !== id))
   }
 
   function splitNote(id: string): void {
+    record('split')
     setNotes((prev) => {
       const note = prev.find((n) => n.id === id)
       if (!note) {
@@ -223,6 +287,7 @@ function VocalsView({ onBack }: VocalsViewProps) {
     if (!orderedIds[index]) {
       return
     }
+    record('merge')
     const lyricById = new Map(notes.map((n) => [n.id, n.lyric]))
     const lyrics = orderedIds.map((id) => lyricById.get(id) ?? '')
     const cur = (lyrics[index] ?? '').replace(/-+$/, '')
@@ -445,6 +510,8 @@ function VocalsView({ onBack }: VocalsViewProps) {
                 onAddNote={addNote}
                 onDeleteNote={deleteNote}
                 onSplitNote={splitNote}
+                onUndo={undo}
+                canUndo={canUndo}
                 midiBpm={midiBpm}
                 midiBpmVaries={midiBpmVaries}
                 onEffectiveBpmChange={setEditorBpm}

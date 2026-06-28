@@ -20,6 +20,8 @@ interface VocalTimelineProps {
   onAddNote: (time: number, midi: number) => void
   onDeleteNote: (id: string) => void
   onSplitNote: (id: string) => void
+  onUndo: () => void
+  canUndo: boolean
   midiBpm: number | null
   midiBpmVaries: boolean
   onEffectiveBpmChange: (bpm: number | null) => void
@@ -97,6 +99,8 @@ function VocalTimeline({
   onAddNote,
   onDeleteNote,
   onSplitNote,
+  onUndo,
+  canUndo,
   midiBpm,
   midiBpmVaries,
   onEffectiveBpmChange,
@@ -921,6 +925,15 @@ function VocalTimeline({
       </div>
 
       <div className="note-editor note-tools">
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={!canUndo}
+          title="Undo the last change (Ctrl+Z)"
+          onClick={onUndo}
+        >
+          ↶ undo
+        </button>
         <span className="shift-label">Notes:</span>
         <button
           type="button"
