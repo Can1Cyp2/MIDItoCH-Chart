@@ -337,9 +337,13 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
     )
   }
 
-  function deleteNote(id: string): void {
+  function deleteNotes(ids: string[]): void {
+    if (ids.length === 0) {
+      return
+    }
     record('delete')
-    setNotes((prev) => prev.filter((note) => note.id !== id))
+    const set = new Set(ids)
+    setNotes((prev) => prev.filter((note) => !set.has(note.id)))
   }
 
   function splitNote(id: string): void {
@@ -627,7 +631,7 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
                 onMergeNext={mergeNext}
                 onUpdateNote={updateNote}
                 onAddNote={addNote}
-                onDeleteNote={deleteNote}
+                onDeleteNotes={deleteNotes}
                 onSplitNote={splitNote}
                 onUndo={undo}
                 canUndo={canUndo}
