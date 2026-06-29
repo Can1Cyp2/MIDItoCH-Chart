@@ -8,6 +8,7 @@ import {
   type MidiInspectionResult,
 } from './lib/midiToChart'
 import { convertGpToCloneHeroChart, inspectGpFile, type GpInspectionResult } from './lib/gpToChart'
+import VocalsView from './vocals/VocalsView'
 import siteIcon from './assets/fret_icon.png'
 import './App.css'
 
@@ -16,6 +17,7 @@ const ACCEPTED_GP_EXTENSIONS = ['.gp', '.gpif', '.gpx']
 const MAX_MERGED_TRACKS = 3
 
 type InputKind = 'midi' | 'gp' | 'unknown'
+type AppView = 'converter' | 'vocals'
 
 function parseManualMidiRemap(raw: string): { map: Record<number, number>; error: string | null } {
   const map: Record<number, number> = {}
@@ -114,7 +116,13 @@ function suggestMidiTrackIndices(
   return [nonEmpty[0].index]
 }
 
-function App() {
+function ConverterView({
+  onOpenVocals,
+  onConverted,
+}: {
+  onOpenVocals: () => void
+  onConverted: (result: ConversionResult) => void
+}) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -609,6 +617,7 @@ function App() {
       }
 
       setResult(converted)
+      onConverted(converted)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Conversion failed.'
       setErrorMessage(message)
@@ -658,6 +667,14 @@ function App() {
           <span className="pill">Pick one or multiple MIDI tracks</span>
           <span className="pill">Tempo + signature lock</span>
         </div>
+        <button type="button" className="vocals-cta" onClick={onOpenVocals}>
+          <span className="vocals-cta-icon">🎤</span>
+          <span className="vocals-cta-text">
+            <strong>Chart vocals for YARG</strong>
+            <span>Map a vocal melody MIDI to lyrics and export a PART VOCALS track</span>
+          </span>
+          <span className="vocals-cta-arrow">→</span>
+        </button>
       </section>
 
       <section className="grid-layout">
@@ -1271,6 +1288,23 @@ function App() {
         )}
       </section>
     </main>
+  )
+}
+
+function App() {
+  const [view, setView] = useState<AppView>('converter')
+  // Most recent converted instrument chart, shared so the vocals view can merge it.
+  const [instrumentChart, setInstrumentChart] = useState<ConversionResult | null>(null)
+
+  if (view === 'vocals') {
+    return <VocalsView onBack={() => setView('converter')} instrumentChart={instrumentChart} />
+  }
+
+  return (
+    <ConverterView
+      onOpenVocals={() => setView('vocals')}
+      onConverted={setInstrumentChart}
+    />
   )
 }
 

@@ -1078,6 +1078,15 @@ export async function convertGpToCloneHeroChart(
       fretboardSummary,
       mappedPreviewNotes: buildPreviewNotes(notes, options.accentOpenHiHatOnYellowCymbal),
       maxTick: notes.at(-1)?.tick ?? 0,
+      tempos: data.tempoEvents.map((t) => ({ ticks: t.tick, bpm: t.bpm })),
+      timeSignatures: [{ ticks: 0, numerator: 4, denominator: 4 }],
+      mergeNotes: notes.map((n) => ({
+        tick: n.tick,
+        length: n.length,
+        lane: n.lane,
+        cymbal: n.cymbal,
+        openHiHat: n.openHiHat,
+      })),
     },
   }
 }

@@ -62,6 +62,10 @@ export interface ConversionMeta {
   fretboardSummary: FretboardPlacementSummary | null
   mappedPreviewNotes: Array<{ tick: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }>
   maxTick: number
+  /** Data needed to re-emit this chart as a MIDI track for merging with vocals. */
+  tempos: Array<{ ticks: number; bpm: number }>
+  timeSignatures: Array<{ ticks: number; numerator: number; denominator: number }>
+  mergeNotes: Array<{ tick: number; length: number; lane: 0 | 1 | 2 | 3 | 4; cymbal: boolean; openHiHat: boolean }>
 }
 
 export interface ConversionResult {
@@ -696,6 +700,19 @@ export async function convertMidiToCloneHeroChart(
       fretboardSummary,
       mappedPreviewNotes: buildPreviewNotes(notes, options.accentOpenHiHatOnYellowCymbal),
       maxTick: notes.at(-1)?.tick ?? 0,
+      tempos: midi.header.tempos.map((t) => ({ ticks: t.ticks, bpm: t.bpm })),
+      timeSignatures: midi.header.timeSignatures.map((ts) => ({
+        ticks: ts.ticks,
+        numerator: ts.timeSignature[0],
+        denominator: ts.timeSignature[1],
+      })),
+      mergeNotes: notes.map((n) => ({
+        tick: n.tick,
+        length: n.length,
+        lane: n.lane,
+        cymbal: n.cymbal,
+        openHiHat: n.openHiHat,
+      })),
     },
   }
 }
