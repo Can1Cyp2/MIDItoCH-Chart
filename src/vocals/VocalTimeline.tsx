@@ -52,7 +52,12 @@ const NotesLayer = memo(function NotesLayer({
   bounds: PitchBounds
   selectedId: string | null
   onSelect: (id: string) => void
-  onPointerDown: (id: string, clientX: number, clientY: number, mode: 'move' | 'resize') => void
+  onPointerDown: (
+    id: string,
+    clientX: number,
+    clientY: number,
+    mode: 'move' | 'resize-left' | 'resize-right',
+  ) => void
 }) {
   return (
     <>
@@ -68,7 +73,7 @@ const NotesLayer = memo(function NotesLayer({
             key={note.id}
             className={`tl-note ${isSelected ? 'selected' : ''} ${note.lyric.trim() ? 'has-lyric' : ''} ${nonPitched ? 'non-pitched' : ''}`}
             style={{ left, width, top, height: LANE_HEIGHT - 2 }}
-            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — drag to move (up/down = pitch), drag the right edge to resize`}
+            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — drag to move (up/down = pitch); drag either end to resize. Hold Shift to lock time (pitch only), Alt to lock pitch (time only).`}
             onClick={(event) => {
               event.stopPropagation()
               onSelect(note.id)
@@ -79,13 +84,21 @@ const NotesLayer = memo(function NotesLayer({
               onPointerDown(note.id, event.clientX, event.clientY, 'move')
             }}
           >
-            <span className="tl-note-label">{midiToNoteName(note.midi)}</span>
             <span
-              className="tl-note-resize"
+              className="tl-note-resize tl-note-resize-left"
               onMouseDown={(event) => {
                 event.preventDefault()
                 event.stopPropagation()
-                onPointerDown(note.id, event.clientX, event.clientY, 'resize')
+                onPointerDown(note.id, event.clientX, event.clientY, 'resize-left')
+              }}
+            />
+            <span className="tl-note-label">{midiToNoteName(note.midi)}</span>
+            <span
+              className="tl-note-resize tl-note-resize-right"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onPointerDown(note.id, event.clientX, event.clientY, 'resize-right')
               }}
             />
           </button>
@@ -145,7 +158,15 @@ function VocalTimeline({
   const synthRef = useRef<MelodySynth | null>(null)
   const dragRef = useRef<
     | null
-    | { id: string; mode: 'move' | 'resize'; startX: number; startY: number; time: number; duration: number; midi: number }
+    | {
+        id: string
+        mode: 'move' | 'resize-left' | 'resize-right'
+        startX: number
+        startY: number
+        time: number
+        duration: number
+        midi: number
+      }
   >(null)
   const onUpdateNoteRef = useRef(onUpdateNote)
   const timeScaleRef = useRef(1)
@@ -202,10 +223,22 @@ function VocalTimeline({
       }
       const dt = (event.clientX - drag.startX) / scale
       if (drag.mode === 'move') {
-        const dSemi = -Math.round((event.clientY - drag.startY) / LANE_HEIGHT)
-        onUpdateNoteRef.current(drag.id, { time: Math.max(0, drag.time + dt), midi: drag.midi + dSemi })
-      } else {
+        // Shift locks time (vertical line, pitch only); Alt locks pitch (horizontal, time only).
+        const lockTime = event.shiftKey
+        const lockPitch = event.altKey
+        const time = lockTime ? drag.time : Math.max(0, drag.time + dt)
+        const dSemi = lockPitch ? 0 : -Math.round((event.clientY - drag.startY) / LANE_HEIGHT)
+        onUpdateNoteRef.current(drag.id, { time, midi: drag.midi + dSemi })
+      } else if (drag.mode === 'resize-right') {
         onUpdateNoteRef.current(drag.id, { duration: Math.max(0.05, drag.duration + dt) })
+      } else {
+        // resize-left: move the start, keep the end fixed.
+        const maxShift = drag.duration - 0.05
+        const shift = Math.min(maxShift, dt)
+        onUpdateNoteRef.current(drag.id, {
+          time: Math.max(0, drag.time + shift),
+          duration: drag.duration - shift,
+        })
       }
     }
     function up() {
@@ -311,7 +344,7 @@ function VocalTimeline({
 
   // Begin a note drag; origin values are read from the canonical (unscaled) notes.
   const onNotePointerDown = useCallback(
-    (id: string, clientX: number, clientY: number, mode: 'move' | 'resize') => {
+    (id: string, clientX: number, clientY: number, mode: 'move' | 'resize-left' | 'resize-right') => {
       const note = notes.find((n) => n.id === id)
       if (!note) {
         return
@@ -1268,7 +1301,8 @@ function VocalTimeline({
       <p className="shortcuts-hint">
         Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> previous/next note ·{' '}
         <kbd>Del</kbd>/<kbd>Backspace</kbd> delete note · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo ·{' '}
-        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · drag a note end to resize · hold{' '}
+        <kbd>Shift</kbd> while dragging to lock time (pitch only), <kbd>Alt</kbd> to lock pitch (time only)
       </p>
     </div>
   )
