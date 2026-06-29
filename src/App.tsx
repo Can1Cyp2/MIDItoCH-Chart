@@ -13,6 +13,7 @@ import './App.css'
 
 const ACCEPTED_MIDI_EXTENSIONS = ['.mid', '.midi']
 const ACCEPTED_GP_EXTENSIONS = ['.gp', '.gpif', '.gpx']
+const MAX_MERGED_TRACKS = 3
 
 type InputKind = 'midi' | 'gp' | 'unknown'
 
@@ -123,13 +124,13 @@ function App() {
   const [midiInfo, setMidiInfo] = useState<MidiInspectionResult | null>(null)
   const [selectedMidiTrackIndices, setSelectedMidiTrackIndices] = useState<number[]>([])
   const [gpInfo, setGpInfo] = useState<GpInspectionResult | null>(null)
-  const [selectedGpTrackId, setSelectedGpTrackId] = useState<string>('')
+  const [selectedGpTrackIds, setSelectedGpTrackIds] = useState<string[]>([])
   const [manualMidiRemapText, setManualMidiRemapText] = useState('')
   const [options, setOptions] = useState<ConvertOptions>({
     instrumentMode: 'drums',
     preferChannel10Only: true,
     emitCymbalMarkers: true,
-    accentOpenHiHatOnYellowCymbal: true,
+    accentOpenHiHatOnYellowCymbal: false,
     forceZeroLengthNotes: true,
     preserveStackedHits: true,
     difficulty: 'ExpertDrums',
@@ -534,7 +535,20 @@ function App() {
     setMidiInfo(null)
     setSelectedMidiTrackIndices([])
     setGpInfo(null)
-    setSelectedGpTrackId('')
+    setSelectedGpTrackIds([])
+
+    if (midi) {
+      try {
+        const parsed = await inspectMidiFile(file)
+        setMidiInfo(parsed)
+        setSelectedMidiTrackIndices(
+          suggestMidiTrackIndices(parsed, options.instrumentMode, options.preferChannel10Only),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not parse MIDI file.'
+        setErrorMessage(message)
+      }
+    }
 
     if (midi) {
       try {
@@ -554,7 +568,7 @@ function App() {
         const parsed = await inspectGpFile(file)
         setGpInfo(parsed)
         const defaultTrack = parsed.tracks.find((track) => track.isDrums) ?? parsed.tracks[0]
-        setSelectedGpTrackId(defaultTrack?.id ?? '')
+        setSelectedGpTrackIds(defaultTrack ? [defaultTrack.id] : [])
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Could not parse GP file.'
         setErrorMessage(message)
@@ -586,10 +600,10 @@ function App() {
     try {
       let converted: ConversionResult
       if (inputKind === 'gp') {
-        if (!selectedGpTrackId) {
-          throw new Error('Choose a GP track before converting.')
+        if (selectedGpTrackIds.length === 0) {
+          throw new Error('Choose at least one GP track before converting.')
         }
-        converted = await convertGpToCloneHeroChart(selectedFile, selectedGpTrackId, effectiveOptions)
+        converted = await convertGpToCloneHeroChart(selectedFile, selectedGpTrackIds, effectiveOptions)
       } else {
         converted = await convertMidiToCloneHeroChart(selectedFile, effectiveOptions)
       }
@@ -681,7 +695,7 @@ function App() {
           {inputKind === 'midi' && midiInfo ? (
             <div className="gp-track-box">
               <p className="meta-row">
-                MIDI track selection: choose one or more tracks to convert.
+                MIDI track selection: choose up to {MAX_MERGED_TRACKS} tracks to merge into one instrument.
               </p>
               <div className="midi-track-list">
                 {midiInfo.tracks
@@ -696,6 +710,9 @@ function App() {
                           onChange={(event) => {
                             const next = new Set(selectedMidiTrackIndices)
                             if (event.target.checked) {
+                              if (!checked && next.size >= MAX_MERGED_TRACKS) {
+                                return
+                              }
                               next.add(track.index)
                             } else {
                               next.delete(track.index)
@@ -724,19 +741,38 @@ function App() {
                 Notes can sometimes be missing from GP files. We are actively fixing this glitch.
                 MIDI files usually convert more reliably right now.
               </p>
-              <label className="select-row">
-                Isolate Track / Part
-                <select
-                  value={selectedGpTrackId}
-                  onChange={(event) => setSelectedGpTrackId(event.target.value)}
-                >
-                  {gpInfo.tracks.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {gpTrackOptionLabel(track)} {track.isDrums ? '(drums)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <p className="meta-row">
+                GP track selection: choose up to {MAX_MERGED_TRACKS} tracks to merge into one instrument.
+              </p>
+              <div className="midi-track-list">
+                {gpInfo.tracks.map((track) => {
+                  const checked = selectedGpTrackIds.includes(track.id)
+                  return (
+                    <label key={`gp-track-${track.id}`} className="midi-track-item">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          const next = new Set(selectedGpTrackIds)
+                          if (event.target.checked) {
+                            if (!checked && next.size >= MAX_MERGED_TRACKS) {
+                              return
+                            }
+                            next.add(track.id)
+                          } else {
+                            next.delete(track.id)
+                          }
+                          setSelectedGpTrackIds([...next])
+                        }}
+                      />
+                      <span>
+                        <strong>{gpTrackOptionLabel(track)}</strong> {track.isDrums ? '| drums' : ''}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+              <span className="hint-row">Checked tracks are merged into a single output chart.</span>
               <div className="track-details-list">
                 {gpInfo.tracks.map((track) => (
                   <p key={`track-meta-${track.id}`}>
@@ -831,6 +867,22 @@ function App() {
                   }
                 />
                 Emit pro-drums cymbal marker notes
+              </label>
+            ) : null}
+
+            {isDrumMode ? (
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={options.accentOpenHiHatOnYellowCymbal}
+                  onChange={(event) =>
+                    setOptions((prev) => ({
+                      ...prev,
+                      accentOpenHiHatOnYellowCymbal: event.target.checked,
+                    }))
+                  }
+                />
+                Accent yellow cymbal (hi-hat/open hi-hat)
               </label>
             ) : null}
 
