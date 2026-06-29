@@ -670,7 +670,7 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
                 ) : (
                   <>
                     To merge vocals with an instrument chart, convert a drums/guitar/bass chart on
-                    the main page first — it&apos;s remembered when you come back here.
+                    the main page first, it&apos;s remembered when you come back here.
                   </>
                 )}
               </p>

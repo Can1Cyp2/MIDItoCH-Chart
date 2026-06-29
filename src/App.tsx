@@ -650,10 +650,12 @@ function ConverterView({
     <main className="page-shell">
       <section className="hero-card">
         <div className="hero-headline">
-          <span className="hero-brand-chip">
-            <img src={siteIcon} alt="MIDI to CH Chart logo" className="hero-brand-icon" />
-            MIDI to CH Chart
-          </span>
+          <div className="hero-brand">
+            <span className="hero-brand-badge">
+              <img src={siteIcon} alt="MIDI to CH Chart logo" className="hero-brand-icon" />
+            </span>
+            <span className="hero-wordmark">MIDI to CH Chart</span>
+          </div>
           <p className="kicker">Clone Hero Chart Converter</p>
           <h1>Build stage-ready Clone Hero charts with GuitarPro or Midi Files</h1>
           <p className="lead">

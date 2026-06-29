@@ -1,15 +1,35 @@
 @import url('https://fonts.googleapis.com/css2?family=Audiowide&family=Rajdhani:wght@500;600;700&display=swap');
 
 :root {
-  --bg: #060f23;
-  --bg-ink: #f0f6ff;
-  --text: #e2efff;
-  --text-soft: #b6d1f4;
-  --muted: #8db0d9;
-  --line: rgba(146, 193, 255, 0.34);
-  --line-strong: rgba(146, 193, 255, 0.7);
-  --panel-bg: rgba(8, 20, 43, 0.9);
-  --soft-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
+  /* Neutral DAW surfaces (flat, cool charcoal) */
+  --bg: #0d0f12;
+  --bg-2: #121419;
+  --surface: #16191f;
+  --surface-2: #1c2027;
+  --surface-3: #232830;
+  --line: #2a2f38;
+  --line-strong: #3a414d;
+
+  /* Text */
+  --bg-ink: #f1f3f6;
+  --text: #e6e8ec;
+  --text-soft: #b4bac4;
+  --muted: #858c98;
+
+  /* Accents */
+  --accent: #ffb02e;
+  --accent-strong: #ff9a1f;
+  --accent-ink: #1c1404;
+  --accent-soft: rgba(255, 176, 46, 0.12);
+  --accent-line: rgba(255, 176, 46, 0.5);
+  --blue: #5b9dff;
+  --blue-soft: rgba(91, 157, 255, 0.14);
+  --record: #ff5a6e;
+  --good: #57d18c;
+
+  --panel-bg: var(--surface);
+  --soft-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --radius: 12px;
 }
 
 * {
@@ -21,11 +41,7 @@ body {
   font-family: 'Rajdhani', 'Segoe UI', sans-serif;
   color: var(--text);
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 5% 12%, rgba(84, 169, 255, 0.3), transparent 34%),
-    radial-gradient(circle at 88% 4%, rgba(255, 87, 129, 0.22), transparent 42%),
-    radial-gradient(circle at 50% 120%, rgba(255, 214, 95, 0.1), transparent 50%),
-    linear-gradient(180deg, #060f23, #020917 48%, #040c1d 100%);
+  background: var(--bg);
 }
 
 h1,
@@ -38,15 +54,16 @@ h3 {
 h1 {
   margin-top: 0.25rem;
   font-family: 'Audiowide', 'Rajdhani', sans-serif;
-  line-height: 1.1;
+  line-height: 1.15;
   letter-spacing: 0.01em;
-  font-size: clamp(1.6rem, 2.6vw, 2.6rem);
-  color: #eff7ff;
+  font-size: clamp(1.5rem, 2.4vw, 2.3rem);
+  color: var(--bg-ink);
 }
 
 h2 {
   margin-bottom: 0.55rem;
-  font-size: 1.06rem;
+  font-size: 1.02rem;
+  letter-spacing: 0.01em;
 }
 
 h3 {
@@ -57,4 +74,37 @@ h3 {
 p {
   margin: 0;
   line-height: 1.5;
+}
+
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--accent);
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-2);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 6px;
+  border: 2px solid var(--bg-2);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a525f;
 }
