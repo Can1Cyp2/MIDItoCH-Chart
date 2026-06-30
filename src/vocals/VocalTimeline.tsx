@@ -1080,11 +1080,27 @@ function VocalTimeline({
         />
       ) : null}
 
-      <div className="timeline-scroll" ref={scrollRef} onClick={onTimelineClick}>
-        <div
-          className="timeline-content"
-          style={{ width: contentWidth, height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
-        >
+      <div className="timeline-stage">
+        <div className="tl-piano" aria-hidden="true">
+          <div className="tl-piano-spacer" style={{ height: RULER_HEIGHT }} />
+          <div className="tl-piano-keys" style={{ height: bounds.height }}>
+            {Array.from({ length: bounds.max - bounds.min + 1 }, (_, i) => {
+              const midi = bounds.max - i
+              const name = midiToNoteName(midi)
+              const sharp = name.includes('#')
+              return (
+                <div key={midi} className={`tl-key ${sharp ? 'sharp' : ''}`} style={{ height: LANE_HEIGHT }}>
+                  {!sharp && name.startsWith('C') ? <span className="tl-key-label">{name}</span> : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        <div className="timeline-scroll" ref={scrollRef} onClick={onTimelineClick}>
+          <div
+            className="timeline-content"
+            style={{ width: contentWidth, height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
+          >
           <div className="tl-ruler" style={{ width: contentWidth }}>
             {rulerMarks.map((t) => (
               <span key={t} className="tl-ruler-mark" style={{ left: t * pxPerSec }}>
@@ -1158,6 +1174,7 @@ function VocalTimeline({
             className="tl-playhead"
             style={{ height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
           />
+          </div>
         </div>
       </div>
 

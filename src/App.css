@@ -825,11 +825,59 @@ textarea {
   color: var(--accent);
 }
 
-.timeline-scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
+.timeline-stage {
+  display: flex;
+  align-items: stretch;
   border: 1px solid var(--line);
   border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-2);
+}
+
+.tl-piano {
+  flex: 0 0 auto;
+  width: 48px;
+  background: var(--surface-2);
+  border-right: 1px solid var(--line-strong);
+  user-select: none;
+  z-index: 8;
+}
+
+.tl-piano-spacer {
+  border-bottom: 1px solid var(--line);
+}
+
+.tl-piano-keys {
+  display: flex;
+  flex-direction: column;
+}
+
+.tl-key {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  background: #d7dae1;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.22);
+  box-sizing: border-box;
+}
+
+.tl-key.sharp {
+  background: #23272f;
+  border-bottom-color: rgba(0, 0, 0, 0.5);
+}
+
+.tl-key-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #1a1d23;
+}
+
+.timeline-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   background:
     repeating-linear-gradient(
       to bottom,

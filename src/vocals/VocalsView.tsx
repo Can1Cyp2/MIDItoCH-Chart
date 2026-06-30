@@ -416,15 +416,30 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
     // exactly what the editor plays (real time = ticks/ppq * 60/bpm).
     const exportTempos =
       editorBpm && midiBpm != null ? [{ ticks: 0, bpm: editorBpm }] : parsed.tempos
+    // Bake the align offset (delay) into the output so the vocals land at the
+    // same point in the song as in the editor: songTime = noteTime + offset.
+    const bpmForTicks = editorBpm ?? midiBpm ?? 120
+    const offsetTicks = Math.round((alignOffset * bpmForTicks * parsed.ppq) / 60)
+    const exportNotes =
+      offsetTicks === 0
+        ? notes
+        : notes.map((note) => ({
+            ...note,
+            ticks: Math.max(0, note.ticks + offsetTicks),
+          }))
     const data = buildVocalsMidi({
       ppq: parsed.ppq,
       tempos: exportTempos,
       timeSignatures: parsed.timeSignatures,
-      notes,
+      notes: exportNotes,
     })
     const base = parsed.fileName.replace(/\.[^/.]+$/, '')
     downloadMidi(data, `${base} (PART VOCALS).mid`)
-    setStatus('Exported PART VOCALS .mid — load it in YARG (or merge into your notes.mid).')
+    const offsetNote =
+      alignOffset !== 0 ? ` Applied a ${alignOffset.toFixed(2)}s offset/delay.` : ''
+    setStatus(
+      `Exported PART VOCALS .mid — load it in YARG (or merge into your notes.mid).${offsetNote}`,
+    )
   }
 
   function onMerge(): void {
