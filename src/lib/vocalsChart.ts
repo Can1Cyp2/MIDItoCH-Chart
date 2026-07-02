@@ -216,14 +216,17 @@ function syllabifyWord(word: string, autoSplit: boolean): string[] {
  * When `autoSplit` is false, words are kept whole unless the user typed dashes.
  */
 export function syllabifyLyrics(raw: string, autoSplit = true): Syllable[] {
-  const lines = raw.split(/\r?\n/)
+  // Strip zero-width characters that lyric sites embed, then split lines.
+  const lines = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').split(/\r?\n/)
   const syllables: Syllable[] = []
 
   lines.forEach((line) => {
     const words = line
       .trim()
       .split(/\s+/)
-      .filter(Boolean)
+      // Drop pure punctuation/separator tokens ("—", "...", "-") — they are
+      // not sung, and letting them consume a note shifts every later word.
+      .filter((word) => /[\p{L}\p{N}]/u.test(word))
     if (words.length === 0) {
       return
     }

@@ -31,6 +31,7 @@ export class MelodySynth {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
   private volume = 0.9
+  private playbackRate = 1
   private notes: SynthNote[] = []
   private endPos = 0
 
@@ -64,7 +65,7 @@ export class MelodySynth {
     if (!this.playing || !this.ctx) {
       return this.pausedPos
     }
-    return this.startPos + (this.ctx.currentTime - this.startCtxTime)
+    return this.startPos + (this.ctx.currentTime - this.startCtxTime) * this.playbackRate
   }
 
   private ensureCtx(): AudioContext | null {
@@ -88,6 +89,23 @@ export class MelodySynth {
     }
   }
 
+  setPlaybackRate(value: number): void {
+    const nextRate = Math.max(0.25, Math.min(1.25, value))
+    if (nextRate === this.playbackRate) {
+      return
+    }
+
+    const currentPos = this.getTime()
+    this.playbackRate = nextRate
+
+    if (this.playing && this.ctx) {
+      this.startPos = currentPos
+      this.startCtxTime = this.ctx.currentTime
+      this.nextIndex = this.firstIndexAtOrAfter(currentPos)
+      this.stopActiveVoices()
+    }
+  }
+
   private firstIndexAtOrAfter(pos: number): number {
     const index = this.notes.findIndex((n) => n.time >= pos)
     return index < 0 ? this.notes.length : index
@@ -105,6 +123,15 @@ export class MelodySynth {
     this.playing = true
     this.tick()
     this.timer = window.setInterval(() => this.tick(), TICK_MS)
+  }
+
+  playPreviewNote(midi: number, duration = 0.55): void {
+    const ctx = this.ensureCtx()
+    if (!ctx) {
+      return
+    }
+    void ctx.resume()
+    this.scheduleVoice(midi, ctx.currentTime, Math.max(0.08, duration))
   }
 
   pause(): void {
@@ -136,13 +163,14 @@ export class MelodySynth {
       return
     }
     const now = this.getTime()
+    const rate = Math.max(0.01, this.playbackRate)
     while (
       this.nextIndex < this.notes.length &&
-      this.notes[this.nextIndex].time < now + LOOKAHEAD_SEC
+      this.notes[this.nextIndex].time < now + LOOKAHEAD_SEC * rate
     ) {
       const note = this.notes[this.nextIndex]
-      const when = Math.max(ctx.currentTime, this.startCtxTime + (note.time - this.startPos))
-      this.scheduleVoice(note.midi, when, Math.max(0.06, note.duration))
+      const when = Math.max(ctx.currentTime, this.startCtxTime + (note.time - this.startPos) / rate)
+      this.scheduleVoice(note.midi, when, Math.max(0.06, note.duration / rate))
       this.nextIndex += 1
     }
 

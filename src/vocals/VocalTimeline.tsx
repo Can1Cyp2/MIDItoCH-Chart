@@ -10,6 +10,9 @@ const RULER_HEIGHT = 22
 const PITCH_PADDING = 2
 const MIN_NOTE_WIDTH = 8
 const LYRIC_LANE_HEIGHT = 34
+const PIANO_MIN_MIDI = 21
+const PIANO_MAX_MIDI = 108
+const PRACTICE_SPEEDS = [0.5, 0.65, 0.75, 0.85, 1]
 
 interface VocalTimelineProps {
   notes: VocalNote[]
@@ -19,6 +22,11 @@ interface VocalTimelineProps {
   lyricTokenList: string[]
   onMergeNext: (orderedIds: string[], index: number) => void
   onUpdateNote: (id: string, patch: { time?: number; duration?: number; midi?: number }) => void
+  onMoveNotes: (
+    origins: Array<{ id: string; time: number; midi: number }>,
+    dt: number,
+    dSemi: number,
+  ) => void
   onAddNote: (time: number, midi: number) => void
   onDeleteNotes: (ids: string[]) => void
   onSplitNote: (id: string) => void
@@ -151,6 +159,7 @@ function VocalTimeline({
   lyricTokenList,
   onMergeNext,
   onUpdateNote,
+  onMoveNotes,
   onAddNote,
   onDeleteNotes,
   onSplitNote,
@@ -176,6 +185,7 @@ function VocalTimeline({
   const [draft, setDraft] = useState('')
   const [songVolume, setSongVolume] = useState(1)
   const [midiVolume, setMidiVolume] = useState(0.9)
+  const [practiceSpeed, setPracticeSpeed] = useState(1)
   const [resumeOffset, setResumeOffset] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [resumeQuery, setResumeQuery] = useState('')
@@ -188,6 +198,7 @@ function VocalTimeline({
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const pianoScrollRef = useRef<HTMLDivElement | null>(null)
   const playheadRef = useRef<HTMLDivElement | null>(null)
   const timeLabelRef = useRef<HTMLSpanElement | null>(null)
   const waveRef = useRef<HTMLCanvasElement | null>(null)
@@ -203,9 +214,12 @@ function VocalTimeline({
         time: number
         duration: number
         midi: number
+        /** Origins of every selected note when dragging a multi-selection. */
+        group: Array<{ id: string; time: number; midi: number }> | null
       }
   >(null)
   const onUpdateNoteRef = useRef(onUpdateNote)
+  const onMoveNotesRef = useRef(onMoveNotes)
   const timeScaleRef = useRef(1)
   const togglePlayRef = useRef<() => void>(() => {})
   const stepRef = useRef<(delta: number) => void>(() => {})
@@ -247,6 +261,7 @@ function VocalTimeline({
     pxRef.current = pxPerSec
     followRef.current = follow
     onUpdateNoteRef.current = onUpdateNote
+    onMoveNotesRef.current = onMoveNotes
     timeScaleRef.current = timeScale
     togglePlayRef.current = togglePlay
     stepRef.current = step
@@ -286,9 +301,14 @@ function VocalTimeline({
           // Shift locks time (vertical line, pitch only); Alt locks pitch (horizontal, time only).
           const lockTime = event.shiftKey
           const lockPitch = event.altKey
-          const time = lockTime ? drag.time : Math.max(0, drag.time + dt)
           const dSemi = lockPitch ? 0 : -Math.round((event.clientY - drag.startY) / LANE_HEIGHT)
-          onUpdateNoteRef.current(drag.id, { time, midi: drag.midi + dSemi })
+          if (drag.group) {
+            // Multi-selection: move the whole group rigidly by the same delta.
+            onMoveNotesRef.current(drag.group, lockTime ? 0 : dt, dSemi)
+          } else {
+            const time = lockTime ? drag.time : Math.max(0, drag.time + dt)
+            onUpdateNoteRef.current(drag.id, { time, midi: drag.midi + dSemi })
+          }
         } else if (drag.mode === 'resize-right') {
           onUpdateNoteRef.current(drag.id, { duration: Math.max(0.05, drag.duration + dt) })
         } else {
@@ -411,6 +431,26 @@ function VocalTimeline({
     synthRef.current?.setVolume(midiVolume)
   }, [midiVolume])
 
+  useEffect(() => {
+    const audio = audioRef.current
+    if (audio) {
+      audio.playbackRate = practiceSpeed
+      const pitchSafeAudio = audio as HTMLAudioElement & {
+        preservesPitch?: boolean
+        mozPreservesPitch?: boolean
+        webkitPreservesPitch?: boolean
+      }
+      pitchSafeAudio.preservesPitch = true
+      pitchSafeAudio.mozPreservesPitch = true
+      pitchSafeAudio.webkitPreservesPitch = true
+    }
+    const synth = synthRef.current
+    synth?.setPlaybackRate(practiceSpeed)
+    if (audio && synth && !audio.paused) {
+      synth.seek(Math.max(0, audio.currentTime - offsetRef.current))
+    }
+  }, [practiceSpeed, audioUrl])
+
   // Scroll the current word into view when the resume picker opens.
   useEffect(() => {
     if (pickerOpen) {
@@ -452,6 +492,20 @@ function VocalTimeline({
     return { min, max, height: (max - min + 1) * LANE_HEIGHT }
   }, [sortedNotes])
 
+  const pianoBounds = useMemo<PitchBounds>(() => {
+    const min = Math.min(PIANO_MIN_MIDI, bounds.min)
+    const max = Math.max(PIANO_MAX_MIDI, bounds.max)
+    return { min, max, height: (max - min + 1) * LANE_HEIGHT }
+  }, [bounds.min, bounds.max])
+
+  const pianoNoteWindowTop = Math.max(0, (pianoBounds.max - bounds.max) * LANE_HEIGHT)
+
+  useEffect(() => {
+    if (pianoScrollRef.current) {
+      pianoScrollRef.current.scrollTop = pianoNoteWindowTop
+    }
+  }, [pianoNoteWindowTop, bounds.height])
+
   const lastNoteEnd = useMemo(
     () => sortedNotes.reduce((max, n) => Math.max(max, n.time + n.duration), 0),
     [sortedNotes],
@@ -473,6 +527,8 @@ function VocalTimeline({
       if (!note) {
         return
       }
+      // Dragging a note that is part of a multi-selection moves the whole group.
+      const inGroup = mode === 'move' && selectedIds.has(id) && selectedIds.size > 1
       dragRef.current = {
         id,
         mode,
@@ -481,10 +537,21 @@ function VocalTimeline({
         time: note.time,
         duration: note.duration,
         midi: note.midi,
+        group: inGroup
+          ? notes
+              .filter((n) => selectedIds.has(n.id))
+              .map((n) => ({ id: n.id, time: n.time, midi: n.midi }))
+          : null,
       }
-      selectSingle(id)
+      if (inGroup) {
+        // Keep the multi-selection; just make this the focused note.
+        setSelectedId(id)
+        setResumeOffset(0)
+      } else {
+        selectSingle(id)
+      }
     },
-    [notes, selectSingle],
+    [notes, selectSingle, selectedIds],
   )
 
   /** Current playhead position in (scaled) melody seconds. */
@@ -697,6 +764,8 @@ function VocalTimeline({
     if (audio) {
       // Song loaded: audio is the clock, but play the melody synth alongside it
       // so the notes are audible over the mix (balance with the volume sliders).
+      audio.playbackRate = practiceSpeed
+      synth?.setPlaybackRate(practiceSpeed)
       if (audio.paused) {
         void audio.play()
         synth?.play(audio.currentTime - audioOffset)
@@ -716,6 +785,7 @@ function VocalTimeline({
       synth.pause()
       setIsPlaying(false)
     } else {
+      synth.setPlaybackRate(practiceSpeed)
       synth.play()
       setIsPlaying(true)
     }
@@ -918,6 +988,10 @@ function VocalTimeline({
     setSelectedIds(new Set())
   }
 
+  function playPianoNote(midi: number): void {
+    synthRef.current?.playPreviewNote(midi)
+  }
+
   const rulerMarks = useMemo(() => {
     const stepSeconds = pxPerSec < 50 ? 5 : pxPerSec < 110 ? 2 : 1
     const marks: number[] = []
@@ -965,6 +1039,24 @@ function VocalTimeline({
         <span className="time-readout" title="Current audio playback position, in seconds">
           <span ref={timeLabelRef}>0.00s</span>
         </span>
+
+        <label
+          className="ctrl"
+          title="Slow down playback for editing practice without changing BPM, note timing, or export timing"
+        >
+          Speed
+          <select
+            className="speed-select"
+            value={practiceSpeed}
+            onChange={(event) => setPracticeSpeed(Number(event.target.value))}
+          >
+            {PRACTICE_SPEEDS.map((speed) => (
+              <option key={speed} value={speed}>
+                {speed === 1 ? '1x' : `${speed}x`}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="ctrl" title="Stretch or squeeze the time axis — zoom in for dense passages, out for an overview">
           Zoom
@@ -1124,20 +1216,39 @@ function VocalTimeline({
       ) : null}
 
       <div className="timeline-stage">
-        <div className="tl-piano" aria-hidden="true">
+        <div className="tl-piano" aria-label="Playable piano keyboard">
           <div className="tl-piano-spacer" style={{ height: RULER_HEIGHT }} />
-          <div className="tl-piano-keys" style={{ height: bounds.height }}>
-            {Array.from({ length: bounds.max - bounds.min + 1 }, (_, i) => {
-              const midi = bounds.max - i
-              const name = midiToNoteName(midi)
-              const sharp = name.includes('#')
-              return (
-                <div key={midi} className={`tl-key ${sharp ? 'sharp' : ''}`} style={{ height: LANE_HEIGHT }}>
-                  {!sharp && name.startsWith('C') ? <span className="tl-key-label">{name}</span> : null}
-                </div>
-              )
-            })}
+          <div
+            ref={pianoScrollRef}
+            className="tl-piano-scroll"
+            style={{ height: bounds.height }}
+          >
+            <div className="tl-piano-keys" style={{ height: pianoBounds.height }}>
+              {Array.from({ length: pianoBounds.max - pianoBounds.min + 1 }, (_, i) => {
+                const midi = pianoBounds.max - i
+                const name = midiToNoteName(midi)
+                const sharp = name.includes('#')
+                return (
+                  <button
+                    key={midi}
+                    type="button"
+                    className={`tl-key ${sharp ? 'sharp' : ''}`}
+                    style={{ height: LANE_HEIGHT }}
+                    title={`Play ${name}`}
+                    aria-label={`Play ${name}`}
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      playPianoNote(midi)
+                    }}
+                  >
+                    {!sharp && name.startsWith('C') ? <span className="tl-key-label">{name}</span> : null}
+                  </button>
+                )
+              })}
+            </div>
           </div>
+          <div className="tl-piano-lyric-spacer" style={{ height: LYRIC_LANE_HEIGHT }} />
         </div>
         <div className="timeline-scroll" ref={scrollRef} onClick={onTimelineClick}>
           <div

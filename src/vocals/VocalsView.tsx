@@ -30,6 +30,7 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
   const [editorBpm, setEditorBpm] = useState<number | null>(null)
   const [autoSyllabify, setAutoSyllabify] = useState(true)
   const [alignOffset, setAlignOffset] = useState(0)
+  const [editorFullscreen, setEditorFullscreen] = useState(false)
   // Tokens that didn't fit on a note; flow back in when notes are pulled earlier.
   const [overflow, setOverflow] = useState<string[]>([])
   const sawDashRef = useRef(false)
@@ -122,6 +123,20 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
+  // Escape exits the fullscreen editor.
+  useEffect(() => {
+    if (!editorFullscreen) {
+      return
+    }
+    function onEsc(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setEditorFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [editorFullscreen])
+
   // Once a dash appears in the lyrics, switch off auto-syllabify and respect the
   // user's manual dashes (they can turn it back on). Handled here, not in an
   // effect, so it only reacts to actual edits.
@@ -132,6 +147,19 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
       setAutoSyllabify(false)
     }
     sawDashRef.current = hasDash
+  }
+
+  /** Remove [tags], (backing words), and {notes} plus the blank lines they leave. */
+  function stripBracketed(): void {
+    const stripped = lyrics
+      .replace(/\[[^\]]*\]|\([^)]*\)|\{[^}]*\}/g, ' ')
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    onLyricsChange(stripped)
+    setStatus('Stripped bracketed tags and backing words from the lyrics.')
   }
 
   const midiBpm = parsed?.tempos[0]?.bpm ?? null
@@ -324,6 +352,38 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
               )
             : note,
         )
+        .sort((a, b) => a.time - b.time),
+    )
+  }
+
+  /**
+   * Move a group of notes rigidly by dt seconds / dSemi semitones, from the
+   * origin positions captured at drag start. Clamped so the group stays in
+   * bounds without deforming (same delta applied to every note).
+   */
+  function moveNotes(
+    origins: Array<{ id: string; time: number; midi: number }>,
+    dt: number,
+    dSemi: number,
+  ): void {
+    if (origins.length === 0) {
+      return
+    }
+    record('note-edit')
+    const minTime = Math.min(...origins.map((o) => o.time))
+    const minMidi = Math.min(...origins.map((o) => o.midi))
+    const maxMidi = Math.max(...origins.map((o) => o.midi))
+    const effDt = Math.max(dt, -minTime)
+    const effSemi = Math.min(108 - maxMidi, Math.max(-minMidi, dSemi))
+    const byId = new Map(origins.map((o) => [o.id, o]))
+    setNotes((prev) =>
+      prev
+        .map((note) => {
+          const origin = byId.get(note.id)
+          return origin
+            ? withTicks(note, origin.time + effDt, note.duration, origin.midi + effSemi)
+            : note
+        })
         .sort((a, b) => a.time - b.time),
     )
   }
@@ -580,6 +640,17 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
             />
             Auto-split words into syllables
           </label>
+          <div className="toggle-row">
+            <button
+              type="button"
+              className="mini-btn wide"
+              disabled={!/[[({]/.test(lyrics)}
+              title="Remove [section tags], (backing words), and {notes} from the lyrics before mapping — e.g. [Chorus], (yeah). They would otherwise consume notes and shift every later word."
+              onClick={stripBracketed}
+            >
+              ✂ strip [tags] &amp; (backing)
+            </button>
+          </div>
           <p className="meta-row">
             {syllableCount} syllable(s) · {selectedTrack?.noteCount ?? 0} melody note(s)
             {overflow.length > 0 ? ` · ${overflow.length} in reserve` : ''}
@@ -625,8 +696,22 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
       </section>
 
       <section className="timeline-section">
-        <article className="panel">
-          <h2>3. Visual editor — line the melody up to the song</h2>
+        <article className={`panel ${editorFullscreen ? 'editor-fullscreen' : ''}`}>
+          <div className="editor-head">
+            <h2>3. Visual editor — line the melody up to the song</h2>
+            <button
+              type="button"
+              className="mini-btn wide"
+              title={
+                editorFullscreen
+                  ? 'Exit the fullscreen editor (Esc)'
+                  : 'Expand the editor to fill the screen for easier editing'
+              }
+              onClick={() => setEditorFullscreen((f) => !f)}
+            >
+              {editorFullscreen ? '🗗 exit fullscreen' : '⛶ fullscreen'}
+            </button>
+          </div>
           <p className="meta-row">
             {mappedCount}/{notes.length} notes have a lyric. Press <strong>Play melody</strong> to hear
             the notes, or load a song and nudge the <strong>align offset</strong> to slide the melody
@@ -645,6 +730,7 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
                 lyricTokenList={lyricTokenList}
                 onMergeNext={mergeNext}
                 onUpdateNote={updateNote}
+                onMoveNotes={moveNotes}
                 onAddNote={addNote}
                 onDeleteNotes={deleteNotes}
                 onSplitNote={splitNote}
