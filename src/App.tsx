@@ -558,6 +558,19 @@ function ConverterView({
       }
     }
 
+    if (midi) {
+      try {
+        const parsed = await inspectMidiFile(file)
+        setMidiInfo(parsed)
+        setSelectedMidiTrackIndices(
+          suggestMidiTrackIndices(parsed, options.instrumentMode, options.preferChannel10Only),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not parse MIDI file.'
+        setErrorMessage(message)
+      }
+    }
+
     if (gp) {
       try {
         const parsed = await inspectGpFile(file)
@@ -891,6 +904,21 @@ function ConverterView({
                 Accent yellow cymbal (hi-hat/open hi-hat)
               </label>
             ) : null}
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.accentOpenHiHatOnYellowCymbal}
+                disabled={!isDrumMode}
+                onChange={(event) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    accentOpenHiHatOnYellowCymbal: event.target.checked,
+                  }))
+                }
+              />
+              Accent yellow cymbal (hi-hat/open hi-hat) {isDrumMode ? '' : '(drums only)'}
+            </label>
 
             <label className="toggle-row">
               <input
