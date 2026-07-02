@@ -38,6 +38,41 @@ interface PitchBounds {
   height: number
 }
 
+interface ResumeOption {
+  index: number
+  token: string
+  contextBefore: string[]
+  contextAfter: string[]
+  searchText: string
+}
+
+function cleanResumeToken(token: string): string {
+  const trimmed = token.trim()
+  return trimmed.length > 0 ? trimmed : '(blank)'
+}
+
+function buildResumeOptions(tokens: string[]): ResumeOption[] {
+  return tokens.map((rawToken, index) => {
+    const token = cleanResumeToken(rawToken)
+    const contextBefore = tokens
+      .slice(Math.max(0, index - 3), index)
+      .map(cleanResumeToken)
+    const contextAfter = tokens
+      .slice(index + 1, Math.min(tokens.length, index + 4))
+      .map(cleanResumeToken)
+
+    return {
+      index,
+      token,
+      contextBefore,
+      contextAfter,
+      searchText: [...contextBefore, token, ...contextAfter, String(index + 1)]
+        .join(' ')
+        .toLowerCase(),
+    }
+  })
+}
+
 /** Memoized note-block layer so it does not re-render every animation frame. */
 const NotesLayer = memo(function NotesLayer({
   notes,
@@ -489,6 +524,14 @@ function VocalTimeline({
 
   // Effective resume point = auto guess + the user's manual nudge (picker).
   const resumeIndex = Math.max(0, Math.min(lyricTokenList.length, autoResumeIndex + resumeOffset))
+  const resumeOptions = useMemo(() => buildResumeOptions(lyricTokenList), [lyricTokenList])
+  const visibleResumeOptions = useMemo(() => {
+    const query = resumeQuery.trim().toLowerCase()
+    if (!query) {
+      return resumeOptions
+    }
+    return resumeOptions.filter((option) => option.searchText.includes(query))
+  }, [resumeOptions, resumeQuery])
 
   // Position the playhead, time readout, and (optionally) selection each frame.
   // The clock is the audio element when a song is loaded, otherwise the synth.
@@ -1440,28 +1483,31 @@ function VocalTimeline({
                     </div>
                     {lyricTokenList.length === 0 ? (
                       <p className="meta-row">No lyrics yet — paste lyrics first.</p>
+                    ) : visibleResumeOptions.length === 0 ? (
+                      <p className="meta-row">No matching lyric syllables.</p>
                     ) : (
                       <div className="resume-grid">
-                        {lyricTokenList
-                          .map((tok, i) => ({ tok, i }))
-                          .filter(({ tok }) =>
-                            tok.toLowerCase().includes(resumeQuery.trim().toLowerCase()),
-                          )
-                          .map(({ tok, i }) => (
+                        {visibleResumeOptions
+                          .map(({ token, contextBefore, contextAfter, index }) => (
                             <button
-                              key={`${i}-${tok}`}
+                              key={`${index}-${token}`}
                               type="button"
-                              ref={i === resumeIndex ? activeItemRef : undefined}
-                              className={`resume-cell ${i === resumeIndex ? 'active' : ''}`}
-                              title={`Resume from word #${i + 1}`}
+                              ref={index === resumeIndex ? activeItemRef : undefined}
+                              className={`resume-cell ${index === resumeIndex ? 'active' : ''}`}
+                              title={`Resume from "${token}" (syllable ${index + 1})`}
                               onClick={() => {
-                                setResumeOffset(i - autoResumeIndex)
+                                setResumeOffset(index - autoResumeIndex)
                                 setPickerOpen(false)
                                 setResumeQuery('')
                               }}
                             >
-                              <span className="resume-cell-idx">{i + 1}</span>
-                              <span className="resume-cell-word">{tok}</span>
+                              <span className="resume-cell-word">{token}</span>
+                              <span className="resume-cell-context">
+                                {contextBefore.length > 0 ? `${contextBefore.join(' ')} ` : ''}
+                                <mark>{token}</mark>
+                                {contextAfter.length > 0 ? ` ${contextAfter.join(' ')}` : ''}
+                              </span>
+                              <span className="resume-cell-idx">Syllable {index + 1}</span>
                             </button>
                           ))}
                       </div>

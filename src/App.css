@@ -1181,7 +1181,7 @@ textarea {
 }
 
 .resume-modal {
-  width: min(900px, 100%);
+  width: min(980px, 100%);
   max-height: min(80vh, 720px);
   display: flex;
   flex-direction: column;
@@ -1220,18 +1220,18 @@ textarea {
   overflow-y: auto;
   padding: 0.8rem 1rem;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.65rem;
   align-content: start;
 }
 
 .resume-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.1rem;
+  display: grid;
+  gap: 0.25rem;
+  align-content: start;
   text-align: left;
-  padding: 0.5rem 0.6rem;
+  min-height: 5rem;
+  padding: 0.65rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-2);
@@ -1254,6 +1254,7 @@ textarea {
 }
 
 .resume-cell-idx {
+  margin-top: 0.1rem;
   font-size: 0.68rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -1264,9 +1265,27 @@ textarea {
 }
 
 .resume-cell-word {
-  font-size: 1rem;
+  font-size: 1.06rem;
   font-weight: 700;
   overflow-wrap: anywhere;
+}
+
+.resume-cell-context {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.resume-cell-context mark {
+  color: inherit;
+  background: transparent;
+  font-weight: 800;
+}
+
+.resume-cell.active .resume-cell-context {
+  color: rgba(28, 20, 4, 0.76);
 }
 
 .shift-label {
