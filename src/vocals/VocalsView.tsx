@@ -31,6 +31,9 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
   const [autoSyllabify, setAutoSyllabify] = useState(true)
   const [alignOffset, setAlignOffset] = useState(0)
   const [editorFullscreen, setEditorFullscreen] = useState(false)
+  // Internal note clipboard: offsets relative to the earliest copied note.
+  const clipboardRef = useRef<Array<{ dt: number; duration: number; midi: number; lyric: string }>>([])
+  const [clipboardCount, setClipboardCount] = useState(0)
   // Tokens that didn't fit on a note; flow back in when notes are pulled earlier.
   const [overflow, setOverflow] = useState<string[]>([])
   const sawDashRef = useRef(false)
@@ -397,6 +400,51 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
     )
   }
 
+  function copyNotes(ids: string[]): void {
+    const chosen = notes.filter((n) => ids.includes(n.id)).sort((a, b) => a.time - b.time)
+    if (chosen.length === 0) {
+      return
+    }
+    const t0 = chosen[0].time
+    clipboardRef.current = chosen.map((n) => ({
+      dt: n.time - t0,
+      duration: n.duration,
+      midi: n.midi,
+      lyric: n.lyric,
+    }))
+    setClipboardCount(chosen.length)
+    setStatus(`Copied ${chosen.length} note(s) — paste lands at the playhead.`)
+  }
+
+  /** Paste the clipboard at `atTime` (earliest note there, spacing preserved). */
+  function pasteNotes(atTime: number): string[] {
+    const clip = clipboardRef.current
+    if (clip.length === 0) {
+      return []
+    }
+    record('add')
+    const stamp = Date.now()
+    const created = clip.map((c, i) =>
+      withTicks(
+        {
+          id: `paste-${stamp}-${i}-${Math.round(Math.random() * 1e6)}`,
+          ticks: 0,
+          durationTicks: 1,
+          time: 0,
+          duration: 0,
+          midi: c.midi,
+          lyric: c.lyric,
+        },
+        Math.max(0, atTime + c.dt),
+        c.duration,
+        c.midi,
+      ),
+    )
+    setNotes((prev) => [...prev, ...created].sort((a, b) => a.time - b.time))
+    setStatus(`Pasted ${created.length} note(s) at the playhead.`)
+    return created.map((n) => n.id)
+  }
+
   function deleteNotes(ids: string[]): void {
     if (ids.length === 0) {
       return
@@ -732,6 +780,9 @@ function VocalsView({ onBack, instrumentChart }: VocalsViewProps) {
                 onUpdateNote={updateNote}
                 onMoveNotes={moveNotes}
                 onAddNote={addNote}
+                onCopyNotes={copyNotes}
+                onPasteNotes={pasteNotes}
+                clipboardCount={clipboardCount}
                 onDeleteNotes={deleteNotes}
                 onSplitNote={splitNote}
                 onUndo={undo}

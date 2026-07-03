@@ -28,6 +28,9 @@ interface VocalTimelineProps {
     dSemi: number,
   ) => void
   onAddNote: (time: number, midi: number) => void
+  onCopyNotes: (ids: string[]) => void
+  onPasteNotes: (atTime: number) => string[]
+  clipboardCount: number
   onDeleteNotes: (ids: string[]) => void
   onSplitNote: (id: string) => void
   onUndo: () => void
@@ -161,6 +164,9 @@ function VocalTimeline({
   onUpdateNote,
   onMoveNotes,
   onAddNote,
+  onCopyNotes,
+  onPasteNotes,
+  clipboardCount,
   onDeleteNotes,
   onSplitNote,
   onUndo,
@@ -224,6 +230,8 @@ function VocalTimeline({
   const togglePlayRef = useRef<() => void>(() => {})
   const stepRef = useRef<(delta: number) => void>(() => {})
   const deleteSelectedRef = useRef<() => void>(() => {})
+  const copySelectedRef = useRef<() => void>(() => {})
+  const pasteAtPlayheadRef = useRef<() => void>(() => {})
   // Marquee (box) selection state.
   const marqueeRef = useRef<HTMLDivElement | null>(null)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -266,6 +274,8 @@ function VocalTimeline({
     togglePlayRef.current = togglePlay
     stepRef.current = step
     deleteSelectedRef.current = deleteSelected
+    copySelectedRef.current = copySelected
+    pasteAtPlayheadRef.current = pasteAtPlayhead
     notesGeomRef.current = sortedNotes.map((n) => {
       const x1 = n.time * pxPerSec
       return {
@@ -400,6 +410,18 @@ function VocalTimeline({
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
+        return
+      }
+      if (event.ctrlKey || event.metaKey) {
+        const key = event.key.toLowerCase()
+        // Leave native copy alone when the user has page text selected.
+        if (key === 'c' && !window.getSelection()?.toString()) {
+          event.preventDefault()
+          copySelectedRef.current()
+        } else if (key === 'v') {
+          event.preventDefault()
+          pasteAtPlayheadRef.current()
+        }
         return
       }
       if (event.code === 'Space') {
@@ -797,6 +819,22 @@ function VocalTimeline({
   function addNoteAtPlayhead(): void {
     const midi = selectedNote?.midi ?? Math.round((bounds.min + bounds.max) / 2)
     onAddNote(scaleDown(getMelodyTime()), midi)
+  }
+
+  function copySelected(): void {
+    const ids = selectedIds.size > 0 ? [...selectedIds] : selectedNote ? [selectedNote.id] : []
+    if (ids.length > 0) {
+      onCopyNotes(ids)
+    }
+  }
+
+  function pasteAtPlayhead(): void {
+    const ids = onPasteNotes(scaleDown(getMelodyTime()))
+    if (ids.length > 0) {
+      // Select the pasted notes so they can be dragged into place immediately.
+      setSelectedIds(new Set(ids))
+      setSelectedId(ids[0])
+    }
   }
 
   function nudgeDuration(deltaSeconds: number): void {
@@ -1438,6 +1476,24 @@ function VocalTimeline({
         <button
           type="button"
           className="mini-btn wide"
+          disabled={selectedIds.size === 0 && !selectedNote}
+          title="Copy the selected note(s) to the clipboard (Ctrl+C)"
+          onClick={copySelected}
+        >
+          ⧉ copy{selectedIds.size > 1 ? ` (${selectedIds.size})` : ''}
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={clipboardCount === 0}
+          title="Paste the copied note(s) at the playhead, keeping their spacing (Ctrl+V)"
+          onClick={pasteAtPlayhead}
+        >
+          📋 paste{clipboardCount > 0 ? ` (${clipboardCount})` : ''}
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
           disabled={selectedIds.size === 0}
           title="Delete the selected note(s) (selection moves to a neighbor)"
           onClick={deleteSelected}
@@ -1685,7 +1741,8 @@ function VocalTimeline({
 
       <p className="shortcuts-hint">
         Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> previous/next note ·{' '}
-        <kbd>Del</kbd>/<kbd>Backspace</kbd> delete note · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo ·{' '}
+        <kbd>Del</kbd>/<kbd>Backspace</kbd> delete note · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste
+        at playhead · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo ·{' '}
         <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · drag a note end to resize · hold{' '}
         <kbd>Shift</kbd> while dragging to lock time (pitch only), <kbd>Alt</kbd> to lock pitch (time only)
       </p>
