@@ -878,6 +878,8 @@ textarea {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background:
     repeating-linear-gradient(
       to bottom,
@@ -1187,8 +1189,8 @@ textarea {
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 16px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  border-radius: 12px;
+  box-shadow: var(--soft-shadow);
   overflow: hidden;
   cursor: default;
 }
