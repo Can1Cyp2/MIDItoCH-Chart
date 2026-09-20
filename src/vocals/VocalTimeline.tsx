@@ -20,7 +20,7 @@ interface VocalTimelineProps {
   onMergeNext: (orderedIds: string[], index: number) => void
   onUpdateNote: (id: string, patch: { time?: number; duration?: number; midi?: number }) => void
   onAddNote: (time: number, midi: number) => void
-  onDeleteNote: (id: string) => void
+  onDeleteNotes: (ids: string[]) => void
   onSplitNote: (id: string) => void
   onUndo: () => void
   canUndo: boolean
@@ -43,16 +43,21 @@ const NotesLayer = memo(function NotesLayer({
   notes,
   pxPerSec,
   bounds,
-  selectedId,
+  selectedIds,
   onSelect,
   onPointerDown,
 }: {
   notes: VocalNote[]
   pxPerSec: number
   bounds: PitchBounds
-  selectedId: string | null
+  selectedIds: Set<string>
   onSelect: (id: string) => void
-  onPointerDown: (id: string, clientX: number, clientY: number, mode: 'move' | 'resize') => void
+  onPointerDown: (
+    id: string,
+    clientX: number,
+    clientY: number,
+    mode: 'move' | 'resize-left' | 'resize-right',
+  ) => void
 }) {
   return (
     <>
@@ -60,7 +65,7 @@ const NotesLayer = memo(function NotesLayer({
         const left = note.time * pxPerSec
         const width = Math.max(MIN_NOTE_WIDTH, note.duration * pxPerSec)
         const top = (bounds.max - note.midi) * LANE_HEIGHT + RULER_HEIGHT
-        const isSelected = note.id === selectedId
+        const isSelected = selectedIds.has(note.id)
         const nonPitched = note.lyric.includes('#')
         return (
           <button
@@ -68,7 +73,7 @@ const NotesLayer = memo(function NotesLayer({
             key={note.id}
             className={`tl-note ${isSelected ? 'selected' : ''} ${note.lyric.trim() ? 'has-lyric' : ''} ${nonPitched ? 'non-pitched' : ''}`}
             style={{ left, width, top, height: LANE_HEIGHT - 2 }}
-            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — drag to move (up/down = pitch), drag the right edge to resize`}
+            title={`${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — drag to move (up/down = pitch); drag either end to resize. Hold Shift to lock time (pitch only), Alt to lock pitch (time only).`}
             onClick={(event) => {
               event.stopPropagation()
               onSelect(note.id)
@@ -79,13 +84,21 @@ const NotesLayer = memo(function NotesLayer({
               onPointerDown(note.id, event.clientX, event.clientY, 'move')
             }}
           >
-            <span className="tl-note-label">{midiToNoteName(note.midi)}</span>
             <span
-              className="tl-note-resize"
+              className="tl-note-resize tl-note-resize-left"
               onMouseDown={(event) => {
                 event.preventDefault()
                 event.stopPropagation()
-                onPointerDown(note.id, event.clientX, event.clientY, 'resize')
+                onPointerDown(note.id, event.clientX, event.clientY, 'resize-left')
+              }}
+            />
+            <span className="tl-note-label">{midiToNoteName(note.midi)}</span>
+            <span
+              className="tl-note-resize tl-note-resize-right"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onPointerDown(note.id, event.clientX, event.clientY, 'resize-right')
               }}
             />
           </button>
@@ -104,7 +117,7 @@ function VocalTimeline({
   onMergeNext,
   onUpdateNote,
   onAddNote,
-  onDeleteNote,
+  onDeleteNotes,
   onSplitNote,
   onUndo,
   canUndo,
@@ -121,6 +134,7 @@ function VocalTimeline({
   const [audioOffset, setAudioOffset] = useState(0)
   const [follow, setFollow] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [typeAlong, setTypeAlong] = useState('')
   const [audioDuration, setAudioDuration] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -129,6 +143,7 @@ function VocalTimeline({
   const [midiVolume, setMidiVolume] = useState(0.9)
   const [resumeOffset, setResumeOffset] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [resumeQuery, setResumeQuery] = useState('')
   const activeItemRef = useRef<HTMLButtonElement | null>(null)
   const [peaks, setPeaks] = useState<WavePeaks | null>(null)
   const [detectedBpm, setDetectedBpm] = useState<number | null>(null)
@@ -145,13 +160,27 @@ function VocalTimeline({
   const synthRef = useRef<MelodySynth | null>(null)
   const dragRef = useRef<
     | null
-    | { id: string; mode: 'move' | 'resize'; startX: number; startY: number; time: number; duration: number; midi: number }
+    | {
+        id: string
+        mode: 'move' | 'resize-left' | 'resize-right'
+        startX: number
+        startY: number
+        time: number
+        duration: number
+        midi: number
+      }
   >(null)
   const onUpdateNoteRef = useRef(onUpdateNote)
   const timeScaleRef = useRef(1)
   const togglePlayRef = useRef<() => void>(() => {})
   const stepRef = useRef<(delta: number) => void>(() => {})
   const deleteSelectedRef = useRef<() => void>(() => {})
+  // Marquee (box) selection state.
+  const marqueeRef = useRef<HTMLDivElement | null>(null)
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const marqueeMovedRef = useRef(false)
+  const suppressClickRef = useRef(false)
+  const notesGeomRef = useRef<Array<{ id: string; x1: number; x2: number; y1: number; y2: number }>>([])
 
   const effectiveBpm =
     bpmSource === 'midi'
@@ -187,33 +216,124 @@ function VocalTimeline({
     togglePlayRef.current = togglePlay
     stepRef.current = step
     deleteSelectedRef.current = deleteSelected
+    notesGeomRef.current = sortedNotes.map((n) => {
+      const x1 = n.time * pxPerSec
+      return {
+        id: n.id,
+        x1,
+        x2: x1 + Math.max(MIN_NOTE_WIDTH, n.duration * pxPerSec),
+        y1: (bounds.max - n.midi) * LANE_HEIGHT + RULER_HEIGHT,
+        y2: (bounds.max - n.midi) * LANE_HEIGHT + RULER_HEIGHT + (LANE_HEIGHT - 2),
+      }
+    })
   })
 
-  // Drag to move/resize notes. Listeners stay mounted and no-op unless dragging.
+  // Drag to move/resize notes, or marquee-select. Listeners stay mounted.
   useEffect(() => {
+    function contentPoint(event: MouseEvent): { x: number; y: number } {
+      const scroller = scrollRef.current
+      if (!scroller) {
+        return { x: 0, y: 0 }
+      }
+      const rect = scroller.getBoundingClientRect()
+      return { x: event.clientX - rect.left + scroller.scrollLeft, y: event.clientY - rect.top }
+    }
+
     function move(event: MouseEvent) {
       const drag = dragRef.current
-      if (!drag) {
+      if (drag) {
+        const scale = pxRef.current * timeScaleRef.current
+        if (scale <= 0) {
+          return
+        }
+        const dt = (event.clientX - drag.startX) / scale
+        if (drag.mode === 'move') {
+          // Shift locks time (vertical line, pitch only); Alt locks pitch (horizontal, time only).
+          const lockTime = event.shiftKey
+          const lockPitch = event.altKey
+          const time = lockTime ? drag.time : Math.max(0, drag.time + dt)
+          const dSemi = lockPitch ? 0 : -Math.round((event.clientY - drag.startY) / LANE_HEIGHT)
+          onUpdateNoteRef.current(drag.id, { time, midi: drag.midi + dSemi })
+        } else if (drag.mode === 'resize-right') {
+          onUpdateNoteRef.current(drag.id, { duration: Math.max(0.05, drag.duration + dt) })
+        } else {
+          const maxShift = drag.duration - 0.05
+          const shift = Math.min(maxShift, dt)
+          onUpdateNoteRef.current(drag.id, {
+            time: Math.max(0, drag.time + shift),
+            duration: drag.duration - shift,
+          })
+        }
         return
       }
-      const scale = pxRef.current * timeScaleRef.current
-      if (scale <= 0) {
+
+      const start = marqueeStartRef.current
+      const box = marqueeRef.current
+      if (start && box) {
+        const p = contentPoint(event)
+        if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) {
+          marqueeMovedRef.current = true
+        }
+        const left = Math.min(start.x, p.x)
+        const top = Math.min(start.y, p.y)
+        box.style.display = 'block'
+        box.style.left = `${left}px`
+        box.style.top = `${top}px`
+        box.style.width = `${Math.abs(p.x - start.x)}px`
+        box.style.height = `${Math.abs(p.y - start.y)}px`
+      }
+    }
+
+    function up(event: MouseEvent) {
+      if (dragRef.current) {
+        dragRef.current = null
         return
       }
-      const dt = (event.clientX - drag.startX) / scale
-      if (drag.mode === 'move') {
-        const dSemi = -Math.round((event.clientY - drag.startY) / LANE_HEIGHT)
-        onUpdateNoteRef.current(drag.id, { time: Math.max(0, drag.time + dt), midi: drag.midi + dSemi })
-      } else {
-        onUpdateNoteRef.current(drag.id, { duration: Math.max(0.05, drag.duration + dt) })
+      const start = marqueeStartRef.current
+      if (!start) {
+        return
       }
+      marqueeStartRef.current = null
+      if (marqueeRef.current) {
+        marqueeRef.current.style.display = 'none'
+      }
+      if (!marqueeMovedRef.current) {
+        return // a plain click; let onTimelineClick handle the seek
+      }
+      suppressClickRef.current = true
+      const p = contentPoint(event)
+      const x1 = Math.min(start.x, p.x)
+      const x2 = Math.max(start.x, p.x)
+      const y1 = Math.min(start.y, p.y)
+      const y2 = Math.max(start.y, p.y)
+      const hit = notesGeomRef.current.filter(
+        (g) => g.x1 < x2 && g.x2 > x1 && g.y1 < y2 && g.y2 > y1,
+      )
+      setSelectedIds(new Set(hit.map((g) => g.id)))
+      setSelectedId(hit.length > 0 ? hit[0].id : null)
     }
-    function up() {
-      dragRef.current = null
+
+    function down(event: MouseEvent) {
+      if (dragRef.current) {
+        return
+      }
+      const target = event.target as HTMLElement | null
+      // Only start a marquee on empty timeline background.
+      if (!target || target.closest('.tl-note, .tl-lyric, .tl-lyric-input, .resume-popup')) {
+        return
+      }
+      if (!scrollRef.current || !scrollRef.current.contains(target)) {
+        return
+      }
+      marqueeStartRef.current = contentPoint(event)
+      marqueeMovedRef.current = false
     }
+
+    window.addEventListener('mousedown', down)
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
     return () => {
+      window.removeEventListener('mousedown', down)
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
     }
@@ -304,14 +424,16 @@ function VocalTimeline({
   const totalSeconds = Math.max(lastNoteEnd, audioDuration) + 4
   const contentWidth = totalSeconds * pxPerSec
 
-  const selectNote = useCallback((id: string) => {
+  const selectSingle = useCallback((id: string) => {
     setSelectedId(id)
+    setSelectedIds(new Set([id]))
     setResumeOffset(0)
   }, [])
+  const selectNote = selectSingle
 
   // Begin a note drag; origin values are read from the canonical (unscaled) notes.
   const onNotePointerDown = useCallback(
-    (id: string, clientX: number, clientY: number, mode: 'move' | 'resize') => {
+    (id: string, clientX: number, clientY: number, mode: 'move' | 'resize-left' | 'resize-right') => {
       const note = notes.find((n) => n.id === id)
       if (!note) {
         return
@@ -325,9 +447,9 @@ function VocalTimeline({
         duration: note.duration,
         midi: note.midi,
       }
-      setSelectedId(id)
+      selectSingle(id)
     },
-    [notes],
+    [notes, selectSingle],
   )
 
   /** Current playhead position in (scaled) melody seconds. */
@@ -406,6 +528,7 @@ function VocalTimeline({
             const cur = sortedNotes.find((n) => time >= n.time && time < n.time + n.duration)
             if (cur) {
               setSelectedId((prev) => (prev === cur.id ? prev : cur.id))
+              setSelectedIds((prev) => (prev.size === 1 && prev.has(cur.id) ? prev : new Set([cur.id])))
             }
           }
         }
@@ -591,9 +714,18 @@ function VocalTimeline({
   }
 
   function onTimelineClick(event: React.MouseEvent<HTMLDivElement>): void {
+    // Ignore the click that ends a marquee drag.
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
     const scroller = scrollRef.current
     if (!scroller) {
       return
+    }
+    // Clicking empty timeline clears the selection.
+    if (selectedIds.size > 0) {
+      setSelectedIds(new Set())
     }
     const rect = scroller.getBoundingClientRect()
     const x = event.clientX - rect.left + scroller.scrollLeft
@@ -616,7 +748,7 @@ function VocalTimeline({
     if (!follow) {
       const next = sortedNotes[selectedIndex + 1]
       if (next) {
-        setSelectedId(next.id)
+        selectSingle(next.id)
       }
     }
   }
@@ -629,7 +761,7 @@ function VocalTimeline({
   }
 
   function startInlineEdit(note: VocalNote): void {
-    setSelectedId(note.id)
+    selectSingle(note.id)
     setDraft(note.lyric)
     setEditingId(note.id)
   }
@@ -648,8 +780,7 @@ function VocalTimeline({
     const base = selectedIndex >= 0 ? selectedIndex : delta > 0 ? -1 : 0
     const next = Math.min(sortedNotes.length - 1, Math.max(0, base + delta))
     const note = sortedNotes[next]
-    setSelectedId(note.id)
-    setResumeOffset(0)
+    selectSingle(note.id)
     // Move the playhead to the note's start.
     const audio = audioRef.current
     if (audio) {
@@ -693,13 +824,55 @@ function VocalTimeline({
   }
 
   function deleteSelected(): void {
-    if (!selectedNote) {
+    const ids = selectedIds.size > 0 ? [...selectedIds] : selectedNote ? [selectedNote.id] : []
+    if (ids.length === 0) {
       return
     }
-    // Move selection to a neighbor so arrow nav continues from here, not the start.
-    const neighbor = sortedNotes[selectedIndex + 1] ?? sortedNotes[selectedIndex - 1] ?? null
-    setSelectedId(neighbor ? neighbor.id : null)
-    onDeleteNote(selectedNote.id)
+    // Reselect a surviving neighbor so arrow nav continues sensibly.
+    const remaining = sortedNotes.filter((n) => !ids.includes(n.id))
+    const lastIdx = Math.max(...ids.map((id) => sortedNotes.findIndex((n) => n.id === id)))
+    const neighbor =
+      remaining.find((n) => sortedNotes.findIndex((s) => s.id === n.id) > lastIdx) ??
+      remaining[remaining.length - 1] ??
+      null
+    if (neighbor) {
+      selectSingle(neighbor.id)
+    } else {
+      setSelectedId(null)
+      setSelectedIds(new Set())
+    }
+    onDeleteNotes(ids)
+  }
+
+  /** Pivot for range selection: the selected note, else the note at the playhead. */
+  function pivotIndex(): number {
+    if (selectedIndex >= 0) {
+      return selectedIndex
+    }
+    const t = getMelodyTime()
+    const i = sortedNotes.findIndex((n) => n.time + n.duration >= t)
+    return i >= 0 ? i : Math.max(0, sortedNotes.length - 1)
+  }
+
+  function selectRange(direction: 'start' | 'end'): void {
+    if (sortedNotes.length === 0) {
+      return
+    }
+    const p = pivotIndex()
+    const slice = direction === 'start' ? sortedNotes.slice(0, p + 1) : sortedNotes.slice(p)
+    setSelectedIds(new Set(slice.map((n) => n.id)))
+    setSelectedId(sortedNotes[p].id)
+  }
+
+  function selectAll(): void {
+    setSelectedIds(new Set(sortedNotes.map((n) => n.id)))
+    if (sortedNotes[0]) {
+      setSelectedId(sortedNotes[0].id)
+    }
+  }
+
+  function clearSelection(): void {
+    setSelectedIds(new Set())
   }
 
   const rulerMarks = useMemo(() => {
@@ -907,11 +1080,27 @@ function VocalTimeline({
         />
       ) : null}
 
-      <div className="timeline-scroll" ref={scrollRef} onClick={onTimelineClick}>
-        <div
-          className="timeline-content"
-          style={{ width: contentWidth, height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
-        >
+      <div className="timeline-stage">
+        <div className="tl-piano" aria-hidden="true">
+          <div className="tl-piano-spacer" style={{ height: RULER_HEIGHT }} />
+          <div className="tl-piano-keys" style={{ height: bounds.height }}>
+            {Array.from({ length: bounds.max - bounds.min + 1 }, (_, i) => {
+              const midi = bounds.max - i
+              const name = midiToNoteName(midi)
+              const sharp = name.includes('#')
+              return (
+                <div key={midi} className={`tl-key ${sharp ? 'sharp' : ''}`} style={{ height: LANE_HEIGHT }}>
+                  {!sharp && name.startsWith('C') ? <span className="tl-key-label">{name}</span> : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        <div className="timeline-scroll" ref={scrollRef} onClick={onTimelineClick}>
+          <div
+            className="timeline-content"
+            style={{ width: contentWidth, height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
+          >
           <div className="tl-ruler" style={{ width: contentWidth }}>
             {rulerMarks.map((t) => (
               <span key={t} className="tl-ruler-mark" style={{ left: t * pxPerSec }}>
@@ -924,10 +1113,11 @@ function VocalTimeline({
             notes={sortedNotes}
             pxPerSec={pxPerSec}
             bounds={bounds}
-            selectedId={selectedId}
+            selectedIds={selectedIds}
             onSelect={selectNote}
             onPointerDown={onNotePointerDown}
           />
+          <div ref={marqueeRef} className="tl-marquee" />
           <div
             className="tl-lyric-lane"
             style={{ top: RULER_HEIGHT + bounds.height, height: LYRIC_LANE_HEIGHT }}
@@ -963,12 +1153,12 @@ function VocalTimeline({
               <button
                 key={`lyric-${note.id}`}
                 type="button"
-                className={`tl-lyric ${note.id === selectedId ? 'selected' : ''} ${text ? '' : 'empty'}`}
+                className={`tl-lyric ${selectedIds.has(note.id) ? 'selected' : ''} ${text ? '' : 'empty'}`}
                 style={{ left, top }}
                 title={`${text ? 'Lyric' : 'No lyric yet'} for ${midiToNoteName(note.midi)} @ ${note.time.toFixed(2)}s — click to select, double-click to edit`}
                 onClick={(event) => {
                   event.stopPropagation()
-                  setSelectedId(note.id)
+                  selectSingle(note.id)
                 }}
                 onDoubleClick={(event) => {
                   event.stopPropagation()
@@ -984,6 +1174,7 @@ function VocalTimeline({
             className="tl-playhead"
             style={{ height: bounds.height + RULER_HEIGHT + LYRIC_LANE_HEIGHT }}
           />
+          </div>
         </div>
       </div>
 
@@ -1012,30 +1203,30 @@ function VocalTimeline({
         />
         <button
           type="button"
-          className="mini-btn"
+          className="mini-btn wide lyric-mark"
           disabled={!selectedNote}
-          title="Mark as '+' — a held note / pitch slide carrying the previous syllable"
+          title="Set the lyric to '+' — a held note / pitch slide carrying the previous syllable"
           onClick={() => applyToSelected(() => '+')}
         >
-          +
+          '+' hold
         </button>
         <button
           type="button"
-          className="mini-btn"
+          className="mini-btn wide lyric-mark"
           disabled={!selectedNote}
-          title="Toggle a trailing hyphen — continue this word into the next note"
+          title="Toggle a trailing '-' — continue this word into the next note"
           onClick={() => applyToSelected((l) => (l.endsWith('-') ? l.replace(/-+$/, '') : `${l.replace(/-+$/, '')}-`))}
         >
-          -
+          '-' word
         </button>
         <button
           type="button"
-          className="mini-btn"
+          className="mini-btn wide lyric-mark"
           disabled={!selectedNote}
           title="Toggle '#' — a non-pitched (talky / distorted, not a real sung pitch) note"
           onClick={() => applyToSelected((l) => (l.includes('#') ? l.replace(/#/g, '') : `${l}#`))}
         >
-          #
+          '#' talky
         </button>
         <button
           type="button"
@@ -1093,11 +1284,11 @@ function VocalTimeline({
         <button
           type="button"
           className="mini-btn wide"
-          disabled={!selectedNote}
-          title="Delete the selected note (selection moves to the next note)"
+          disabled={selectedIds.size === 0}
+          title="Delete the selected note(s) (selection moves to a neighbor)"
           onClick={deleteSelected}
         >
-          🗑 delete
+          🗑 delete{selectedIds.size > 1 ? ` (${selectedIds.size})` : ''}
         </button>
         <button
           type="button"
@@ -1126,6 +1317,43 @@ function VocalTimeline({
           onClick={() => nudgeDuration(0.1)}
         >
           +
+        </button>
+        <span className="shift-label">Select:</span>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={sortedNotes.length === 0}
+          title="Select every note from the current note back to the start of the song"
+          onClick={() => selectRange('start')}
+        >
+          ⇤ to start
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={sortedNotes.length === 0}
+          title="Select every note from the current note to the end of the song"
+          onClick={() => selectRange('end')}
+        >
+          to end ⇥
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={sortedNotes.length === 0}
+          title="Select all notes"
+          onClick={selectAll}
+        >
+          all
+        </button>
+        <button
+          type="button"
+          className="mini-btn wide"
+          disabled={selectedIds.size === 0}
+          title="Clear the selection"
+          onClick={clearSelection}
+        >
+          clear{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
       </div>
 
@@ -1180,33 +1408,66 @@ function VocalTimeline({
                 {lyricTokenList[resumeIndex] ?? '(end)'} ▾
               </button>
               {pickerOpen ? (
-                <>
-                  <div className="resume-backdrop" onClick={() => setPickerOpen(false)} />
-                  <div className="resume-popup">
-                    <div className="resume-popup-title">Continue lyrics from…</div>
-                    <div className="resume-popup-list">
-                      {lyricTokenList.length === 0 ? (
-                        <span className="meta-row">No lyrics yet — paste lyrics first.</span>
-                      ) : (
-                        lyricTokenList.map((tok, i) => (
-                          <button
-                            key={`${i}-${tok}`}
-                            type="button"
-                            ref={i === resumeIndex ? activeItemRef : undefined}
-                            className={`resume-item ${i === resumeIndex ? 'active' : ''}`}
-                            onClick={() => {
-                              setResumeOffset(i - autoResumeIndex)
-                              setPickerOpen(false)
-                            }}
-                          >
-                            <span className="resume-item-idx">{i + 1}</span>
-                            {tok}
-                          </button>
-                        ))
-                      )}
+                <div
+                  className="resume-modal-backdrop"
+                  onClick={() => {
+                    setPickerOpen(false)
+                    setResumeQuery('')
+                  }}
+                >
+                  <div className="resume-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="resume-modal-head">
+                      <strong>Continue lyrics from…</strong>
+                      <input
+                        className="resume-search"
+                        autoFocus
+                        type="search"
+                        placeholder="Search lyrics…"
+                        value={resumeQuery}
+                        onChange={(event) => setResumeQuery(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="mini-btn"
+                        title="Close"
+                        onClick={() => {
+                          setPickerOpen(false)
+                          setResumeQuery('')
+                        }}
+                      >
+                        ✕
+                      </button>
                     </div>
+                    {lyricTokenList.length === 0 ? (
+                      <p className="meta-row">No lyrics yet — paste lyrics first.</p>
+                    ) : (
+                      <div className="resume-grid">
+                        {lyricTokenList
+                          .map((tok, i) => ({ tok, i }))
+                          .filter(({ tok }) =>
+                            tok.toLowerCase().includes(resumeQuery.trim().toLowerCase()),
+                          )
+                          .map(({ tok, i }) => (
+                            <button
+                              key={`${i}-${tok}`}
+                              type="button"
+                              ref={i === resumeIndex ? activeItemRef : undefined}
+                              className={`resume-cell ${i === resumeIndex ? 'active' : ''}`}
+                              title={`Resume from word #${i + 1}`}
+                              onClick={() => {
+                                setResumeOffset(i - autoResumeIndex)
+                                setPickerOpen(false)
+                                setResumeQuery('')
+                              }}
+                            >
+                              <span className="resume-cell-idx">{i + 1}</span>
+                              <span className="resume-cell-word">{tok}</span>
+                            </button>
+                          ))}
+                      </div>
+                    )}
                   </div>
-                </>
+                </div>
               ) : null}
             </div>
             <button
@@ -1268,7 +1529,8 @@ function VocalTimeline({
       <p className="shortcuts-hint">
         Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> previous/next note ·{' '}
         <kbd>Del</kbd>/<kbd>Backspace</kbd> delete note · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo ·{' '}
-        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redo · drag a note end to resize · hold{' '}
+        <kbd>Shift</kbd> while dragging to lock time (pitch only), <kbd>Alt</kbd> to lock pitch (time only)
       </p>
     </div>
   )

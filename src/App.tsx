@@ -558,6 +558,19 @@ function ConverterView({
       }
     }
 
+    if (midi) {
+      try {
+        const parsed = await inspectMidiFile(file)
+        setMidiInfo(parsed)
+        setSelectedMidiTrackIndices(
+          suggestMidiTrackIndices(parsed, options.instrumentMode, options.preferChannel10Only),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not parse MIDI file.'
+        setErrorMessage(message)
+      }
+    }
+
     if (gp) {
       try {
         const parsed = await inspectGpFile(file)
